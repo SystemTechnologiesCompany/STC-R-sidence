@@ -8,7 +8,9 @@
     "icon": "./assets/stc-logo.png",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "@react-native-google-signin/google-signin",
+      "@react-native-google-signin/google-signin"
     ],
     "experiments": {
       "typedRoutes": true
@@ -17,6 +19,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.stc.residence",
       "adaptiveIcon": {
         "foregroundImage": "./assets/stc-logo.png",
         "backgroundColor": "#FFFFFF"
@@ -25,6 +28,16 @@
     },
     "web": {
       "favicon": "./assets/stc-logo.png"
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "117a51a2-7ba5-4c3d-bb65-958358de4b65"
+      }
     }
   }
 }

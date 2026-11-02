@@ -1,8 +1,40 @@
+import DropdownArrow from '../assets/stc-icons/arrow-drop-down-svgrepo-com.svg';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, Text as NativeText, TextInput as NativeInput, type TextProps, type TextInputProps } from 'react-native';
+import { Modal, Image, View, ScrollView, StyleSheet, useWindowDimensions, Pressable, Text as NativeText, TextInput as NativeInput, type TextProps, type TextInputProps } from 'react-native';
+import { PopIn } from './motion';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const arabic: Record<string, string> = {
+  'Pas de connexion Internet': 'لا يوجد اتصال بالإنترنت',
+  'Supabase non configuré': 'لم يتم إعداد Supabase',
+  'Ajoutez l’URL et la clé publique de votre projet Supabase dans le fichier .env, puis redémarrez Expo.': 'أضف رابط مشروع Supabase والمفتاح العام إلى ملف .env، ثم أعد تشغيل Expo.',
+  'Vérifiez votre Wi-Fi ou vos données mobiles, puis réessayez.': 'تحقق من شبكة الواي فاي أو بيانات الهاتف، ثم أعد المحاولة.',
+  'Vérification…': 'جارٍ التحقق…', 'Réessayer': 'إعادة المحاولة',
+  'Votre espace sera prêt dès le retour de la connexion.': 'سيكون فضاؤك جاهزًا عند عودة الاتصال.',
+  'Mon compte': 'حسابي', 'Nom complet': 'الاسم الكامل', 'Saisissez votre nom': 'أدخل اسمك',
+  'Annuler': 'إلغاء', 'Enregistrer': 'حفظ', 'Enregistrement…': 'جارٍ الحفظ…',
+  'Votre nom est modifiable 14 jours après sa première saisie.': 'يمكن تعديل اسمك بعد 14 يومًا من إدخاله لأول مرة.',
+  'Veuillez patienter ou réouvrir l’application.': 'يرجى الانتظار أو إعادة فتح التطبيق.',
+  'Le nom doit contenir entre 2 et 60 caractères.': 'يجب أن يتكون الاسم من حرفين إلى 60 حرفًا.',
+  'Impossible d’enregistrer le nom. Réessayez.': 'تعذّر حفظ الاسم. أعد المحاولة.',
+  'Poste déjà occupé': 'المنصب مشغول بالفعل',
+  'Cette résidence possède déjà un gestionnaire. Un seul gestionnaire est autorisé par résidence.': 'يوجد مدير لهذه الإقامة بالفعل. يُسمح بمدير واحد فقط لكل إقامة.',
+  'Ce service possède déjà un responsable dans cette résidence. Un seul responsable est autorisé par service.': 'يوجد مسؤول لهذه المصلحة في هذه الإقامة بالفعل. يُسمح بمسؤول واحد فقط لكل مصلحة.',
+  'Vérification indisponible': 'تعذّر التحقق',
+  'Impossible de vérifier les postes. Réessayez avant de continuer.': 'تعذّر التحقق من المناصب. أعد المحاولة قبل المتابعة.',
+  'Continuer en démonstration': 'المتابعة في النسخة التجريبية',
+  'Mode démonstration · sans connexion à un compte réel.': 'وضع تجريبي · دون تسجيل الدخول إلى حساب حقيقي.',
+  'Choisissez votre résidence': 'اختر إقامتك',
+  'Demandes de votre service uniquement': 'طلبات مصلحتك فقط',
+  'Suivi des demandes': 'متابعة الطلبات', 'Tous les services de votre résidence': 'جميع مصالح إقامتك',
+  'Terminées': 'مكتملة', 'En attente': 'قيد الانتظار', 'Alerte · 3 jours': 'تنبيه · 3 أيام',
+  'Demandes sans réponse': 'طلبات دون رد',
+  'Ces demandes ne sont pas terminées et n’ont reçu aucune réponse administrative depuis au moins 72 heures.': 'هذه الطلبات لم تُنجز ولم تتلقَّ أي رد من المسؤولين منذ 72 ساعة على الأقل.',
+  'Aperçu · exemples de demandes inclus': 'معاينة · تتضمن طلبات تجريبية',
+  'Demande': 'الطلب', 'Service': 'المصلحة', 'État': 'الحالة',
+  'Aucune demande pour le moment.': 'لا توجد طلبات حاليًا.',
+  'Rouge : non terminée, sans réponse depuis 3 jours.': 'الأحمر: غير مكتملة ودون رد منذ 3 أيام.',
+  'Maintenance': 'الصيانة', 'Réparations & entretien': 'الإصلاحات والصيانة',
   'RÉSIDENCE': 'الإقامة', 'ESPACE RÉSIDENT': 'فضاء المقيم', 'Votre résidence,': 'إقامتكم،', 'plus proche.': 'أقرب إليكم.',
   'Un seul endroit pour signaler, suivre et améliorer votre quotidien.': 'مكان واحد للتبليغ والمتابعة وتحسين حياتكم اليومية.',
   'OUARGLA': 'ورقلة', '11 résidences · un lien': '11 إقامة · رابط واحد', 'BIENVENUE SUR STC RÉSIDENCE': 'مرحبًا بكم في STC Résidence',
@@ -29,6 +61,7 @@ const arabic: Record<string, string> = {
   'Services présentés d’après les missions universitaires courantes.': 'المصالح المعروضة مبنية على المهام المعتادة للخدمات الجامعية.',
   'Nouveau signalement': 'بلاغ جديد', 'Dites-nous ce qui se passe.': 'أخبرنا بما يحدث.', 'Votre signalement sera transmis au service': 'سيُرسل بلاغك إلى مصلحة', 'de': 'بإقامة',
   'SUJET': 'الموضوع', 'Propreté': 'النظافة', 'Équipement': 'التجهيزات', 'Qualité': 'الجودة', 'Autre': 'أخرى', 'DÉTAILS': 'التفاصيل', 'Décrivez le problème et indiquez où il se trouve…': 'صِف المشكلة وحدّد مكانها…',
+  'Choisissez un sujet': 'اختر موضوعًا', 'Sélectionnez un sujet pour votre signalement.': 'اختر موضوعًا لبلاغك.',
   'PHOTO (FACULTATIF)': 'صورة (اختياري)', 'Photo': 'صورة', 'L’ajout de photo sera activé dans la version connectée.': 'ستُفعّل إضافة الصور في النسخة المتصلة بالخادم.', 'Ajouter une photo': 'إضافة صورة',
   'Envoyer le signalement  →': 'إرسال البلاغ ←', 'Un détail est nécessaire': 'التفاصيل مطلوبة', 'Décrivez brièvement le problème avant l’envoi.': 'صِف المشكلة بإيجاز قبل الإرسال.', 'Signalement enregistré': 'تم تسجيل البلاغ', 'Votre demande apparaît dans votre suivi.': 'يظهر طلبك في قائمة المتابعة.',
   'Boîte de réception': 'صندوق الوارد', 'Mes messages': 'رسائلي', 'Suivez les réponses des équipes de votre résidence.': 'تابع ردود فرق إقامتك.',
@@ -60,13 +93,16 @@ export function translate(text: string, language: 'fr' | 'ar'): string {
   if (text.startsWith('TABLEAU DE BORD · ')) return `لوحة المتابعة · ${translate(text.slice(17), language)}`;
   return text;
 }
+type Notice = { title: string; message: string };
+const NoticeContext = createContext<(notice: Notice) => void>(() => {});
 const LanguageContext = createContext({ language: 'fr' as 'fr' | 'ar', setLanguage: (_language: 'fr' | 'ar') => {} });
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [language, update] = useState<'fr' | 'ar'>('fr');
   const chosen = useRef(false);
   useEffect(() => { let active = true; AsyncStorage.getItem('stc.language').then(value => { if (active && !chosen.current && (value === 'fr' || value === 'ar')) update(value); }).catch(() => {}); return () => { active = false; }; }, []);
   const setLanguage = (value: 'fr' | 'ar') => { chosen.current = true; update(value); void AsyncStorage.setItem('stc.language', value).catch(() => {}); };
-  return <LanguageContext.Provider value={{ language, setLanguage }}>{children}</LanguageContext.Provider>;
+  return <LanguageContext.Provider value={{ language, setLanguage }}><NoticeContext.Provider value={setNotice}>{children}<Modal transparent visible={notice !== null} animationType="fade" onRequestClose={() => setNotice(null)}><View style={popup.overlay}><Pressable style={StyleSheet.absoluteFill} accessibilityLabel={language === 'ar' ? 'إغلاق' : 'Fermer'} onPress={() => setNotice(null)} />{notice && <PopIn style={popup.dialog}><View accessibilityViewIsModal style={{ direction: language === 'ar' ? 'rtl' : 'ltr' }}><View style={popup.badge}><Image source={require('../assets/stc-logo.png')} accessibilityLabel="STC Résidence" resizeMode="contain" style={{ width: 44, height: 44 }} /></View><Text raw accessibilityRole="header" style={popup.title}>{notice.title}</Text><ScrollView style={{ maxHeight: 300 }}><Text raw style={popup.body}>{notice.message}</Text></ScrollView><Pressable accessibilityRole="button" onPress={() => setNotice(null)} style={popup.confirm}><NativeText style={popup.confirmText}>{language === 'ar' ? 'حسنًا' : 'D’accord'}</NativeText></Pressable></View></PopIn>}</View></Modal></NoticeContext.Provider></LanguageContext.Provider>;
 }
 export function useLanguage() {
   const context = useContext(LanguageContext);
@@ -82,10 +118,33 @@ export function TextInput({ placeholder, style, ...props }: TextInputProps) {
   return <NativeInput {...props} placeholder={placeholder ? t(placeholder) : undefined} style={[style, { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }]} />;
 }
 export function LanguageSwitch({ light = false }: { light?: boolean }) {
-  const { language, setLanguage } = useLanguage();
-  return <Pressable accessibilityRole="button" accessibilityLabel={language === 'ar' ? 'التغيير إلى الفرنسية' : 'Passer en arabe'} onPress={() => setLanguage(language === 'ar' ? 'fr' : 'ar')} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: light ? 'rgba(255,255,255,.1)' : '#EAF7F0' }}><NativeText style={{ color: light ? '#B9ED77' : '#16845A', fontWeight: '700', fontSize: 13 }}>{language === 'ar' ? 'FR' : 'العربية'}</NativeText></Pressable>;
+  const { language, setLanguage, rtl } = useLanguage();
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const trigger = useRef<React.ElementRef<typeof View>>(null);
+  const { width, height } = useWindowDimensions();
+  useEffect(() => { setAnchor(null); }, [width, height]);
+  const menuWidth = Math.min(210, width - 32);
+  return <><Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={rtl ? 'اختيار اللغة' : 'Choisir la langue'} accessibilityState={{ expanded: anchor !== null }} onPress={() => trigger.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }))} style={[popup.languageTrigger, { backgroundColor: light ? 'rgba(255,255,255,.1)' : '#EAF7F0' }]}><NativeText style={{ color: light ? '#B9ED77' : '#16845A', fontWeight: '700' }}>{rtl ? 'العربية' : 'FR'}</NativeText><DropdownArrow width={24} height={24} color={light ? '#B9ED77' : '#16845A'} style={{ transform: [{ rotate: anchor ? '180deg' : '0deg' }] }} /></Pressable>
+    <Modal transparent visible={anchor !== null} animationType="fade" onRequestClose={() => setAnchor(null)}><View style={{ flex: 1 }}><Pressable style={StyleSheet.absoluteFill} accessibilityLabel={rtl ? 'إغلاق' : 'Fermer'} onPress={() => setAnchor(null)} />{anchor && <PopIn style={{ ...popup.menu, width: menuWidth, left: Math.max(16, Math.min(width - menuWidth - 16, rtl ? anchor.x : anchor.x + anchor.width - menuWidth)), top: Math.max(16, Math.min(anchor.y + anchor.height + 8, height - 180)) }}><Text raw style={popup.menuHeading}>{rtl ? 'اللغة' : 'Langue'}</Text>{(['fr', 'ar'] as const).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: language === value }} onPress={() => { setLanguage(value); setAnchor(null); }} style={[popup.option, { flexDirection: rtl ? 'row-reverse' : 'row' }, language === value && popup.optionSelected]}><NativeText style={popup.optionText}>{value === 'fr' ? 'Français' : 'العربية'}</NativeText><NativeText style={popup.optionText}>{language === value ? '✓' : ''}</NativeText></Pressable>)}</PopIn>}</View></Modal></>;
 }
 export function useLocalizedAlert() {
-  const { t, rtl } = useLanguage();
-  return { alert: (title: string, message: string, raw = false) => Alert.alert(t(title), raw ? message : t(message), [{ text: rtl ? 'حسنًا' : 'OK' }]) };
+  const { t } = useLanguage();
+  const show = useContext(NoticeContext);
+  return { alert: (title: string, message: string, raw = false) => show({ title: t(title), message: raw ? message : t(message) }) };
 }
+const popup = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(16,61,46,.38)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  dialog: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 28, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E6EDE8', shadowColor: '#103D2E', shadowOpacity: .16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 },
+  badge: { width: 52, height: 52, borderRadius: 18, backgroundColor: '#EAF7F0', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  badgeText: { color: '#16845A', fontSize: 15, fontWeight: '900' },
+  title: { fontSize: 21, fontWeight: '800', color: '#103D2E', marginBottom: 10 },
+  body: { fontSize: 14, lineHeight: 23, color: '#78877F' },
+  confirm: { minHeight: 50, marginTop: 24, borderRadius: 16, backgroundColor: '#16845A', alignItems: 'center', justifyContent: 'center' },
+  confirmText: { color: 'white', fontSize: 14, fontWeight: '800' },
+  languageTrigger: { flexDirection: 'row', gap: 2, minWidth: 54, minHeight: 44, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderRadius: 13 },
+  menu: { position: 'absolute', padding: 8, borderRadius: 20, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E6EDE8', shadowColor: '#103D2E', shadowOpacity: .18, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 12 },
+  menuHeading: { paddingHorizontal: 12, paddingVertical: 8, color: '#78877F', fontSize: 11, fontWeight: '700' },
+  option: { minHeight: 48, borderRadius: 13, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'space-between' },
+  optionSelected: { backgroundColor: '#EAF7F0' },
+  optionText: { fontSize: 14, fontWeight: '700', color: '#16845A' },
+});
