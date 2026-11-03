@@ -32,6 +32,7 @@
     },
     "android": {
       "package": "com.stc.residence",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/stc-logo.png",
         "backgroundColor": "#FFFFFF"

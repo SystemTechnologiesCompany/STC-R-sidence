@@ -27,13 +27,24 @@ After that, the manager account can approve pending service staff from **Équipe
 
 ## 2. Deploy the notification function
 
-From the project folder in PowerShell:
+On Windows, install the native CLI with Scoop (the npm launcher in this environment is missing its Windows binary). In PowerShell, run:
 
 ```powershell
-npx supabase@latest login
-npx supabase@latest link --project-ref ikesrtvfmowjrxhhvtjo
-npx supabase@latest functions deploy send-push-notification
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase-v2-stable
+supabase --version
 ```
+
+Then, from the project folder, sign in and deploy:
+
+```powershell
+supabase login
+supabase functions deploy send-push-notification --project-ref ikesrtvfmowjrxhhvtjo --use-api
+```
+
+The CLI asks you to authenticate with your Supabase account. If it asks for a personal access token, create it in your Supabase account settings and enter it only into the local terminal prompt. `--use-api` bundles the function remotely, so Docker is not needed.
 
 The function uses the Supabase service key supplied by Supabase at runtime. Keep service keys out of `.env` values with the `EXPO_PUBLIC_` prefix and out of the app.
 
