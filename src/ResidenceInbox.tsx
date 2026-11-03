@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardFocusContext } from './KeyboardLayout';
 import { Text, TextInput, useLanguage, useLocalizedAlert } from './i18n';
 import { supabase } from './supabase';
 import { StoredPhoto } from './photos';
@@ -129,13 +130,14 @@ export function ResidenceInbox({ role, residenceId, service, userId }: {
     ))}
 
     <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
-      <View style={styles.modalBackdrop}>
+      <KeyboardFocusContext.Provider value={null}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBackdrop}>
         <View style={styles.modalCard}>
           <View style={styles.modalHeader}>
             <Pressable onPress={() => setSelected(null)} style={styles.close}><Text raw style={styles.closeText}>‹</Text></Pressable>
             <View style={{ flex: 1 }}><Text raw numberOfLines={1} style={styles.modalTitle}>{selected?.subject ?? ''}</Text><Text raw style={styles.service}>{selected?.service ?? ''} · {selected ? statusLabel(selected.status) : ''}</Text></View>
           </View>
-          <ScrollView style={styles.thread} contentContainerStyle={{ paddingVertical: 14, gap: 10 }}>
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={styles.thread} contentContainerStyle={{ paddingVertical: 14, gap: 10 }}>
             {selected && <View style={styles.originalMessage}><Text raw style={styles.messageLabel}>Signalement · {dateLabel(selected.created_at)}</Text><Text raw style={styles.messageBody}>{selected.details}</Text></View>}
             {selected && role !== 'student' && selected.status !== 'done' && <Pressable accessibilityRole="button" disabled={completing} onPress={() => { void markComplete(); }} style={[styles.completeButton, completing && { opacity: .6 }]}><Text style={styles.completeButtonText}>{completing ? 'Clôture…' : 'Marquer comme terminé'}</Text></Pressable>}
             {selected?.photo_path && <StoredPhoto path={selected.photo_path} />}
@@ -147,7 +149,8 @@ export function ResidenceInbox({ role, residenceId, service, userId }: {
             <Pressable accessibilityRole="button" disabled={!draft.trim() || sending} onPress={sendMessage} style={[styles.send, (!draft.trim() || sending) && { opacity: .45 }]}><Text raw style={styles.sendText}>{sending ? '…' : '➤'}</Text></Pressable>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
+      </KeyboardFocusContext.Provider>
     </Modal>
   </View>;
 }
@@ -169,7 +172,7 @@ const styles = StyleSheet.create({
   details: { color: '#67756D', fontSize: 12, lineHeight: 18, marginTop: 8 },
   link: { color: '#16845A', fontSize: 12, fontWeight: '800', marginTop: 12 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(14,34,25,.45)', justifyContent: 'center', padding: 18 },
-  modalCard: { backgroundColor: '#F6F9F6', borderRadius: 24, maxHeight: '86%', minHeight: '58%', padding: 15, overflow: 'hidden' },
+  modalCard: { backgroundColor: '#F6F9F6', borderRadius: 24, height: '86%', padding: 15, overflow: 'hidden' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 12, borderBottomWidth: 1, borderColor: '#E6EDE8' },
   close: { width: 37, height: 37, borderRadius: 13, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center' },
   closeText: { color: '#103D2E', fontSize: 28, lineHeight: 30 },

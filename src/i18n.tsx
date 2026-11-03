@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { Modal, Image, View, ScrollView, StyleSheet, useWindowDimensions, Pressable, Text as NativeText, TextInput as NativeInput, type TextProps, type TextInputProps } from 'react-native';
 import { PopIn } from './motion';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { KeyboardFocusContext } from './KeyboardLayout';
 
 const arabic: Record<string, string> = {
   'Pas de connexion Internet': 'لا يوجد اتصال بالإنترنت',
@@ -120,9 +121,11 @@ export function Text({ children, style, raw = false, ...props }: TextProps & { r
   const { rtl, t } = useLanguage();
   return <NativeText {...props} style={[{ textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }, style, rtl && { letterSpacing: 0 }]}>{raw ? children : React.Children.map(children, child => typeof child === 'string' ? t(child) : child)}</NativeText>;
 }
-export function TextInput({ placeholder, style, ...props }: TextInputProps) {
+export function TextInput({ placeholder, style, onFocus, ...props }: TextInputProps) {
   const { rtl, t } = useLanguage();
-  return <NativeInput {...props} placeholder={placeholder ? t(placeholder) : undefined} style={[style, { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }]} />;
+  const reveal = useContext(KeyboardFocusContext);
+  const input = useRef<React.ComponentRef<typeof NativeInput>>(null);
+  return <NativeInput ref={input} {...props} onFocus={event => { if (input.current) reveal?.(input.current); onFocus?.(event); }} placeholder={placeholder ? t(placeholder) : undefined} style={[style, { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }]} />;
 }
 export function LanguageSwitch({ light = false }: { light?: boolean }) {
   const { language, setLanguage, rtl } = useLanguage();

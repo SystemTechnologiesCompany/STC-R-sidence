@@ -1,3 +1,4 @@
+import { DiscoverSTC } from './src/DiscoverSTC';
 import { ServiceRatings } from './src/ServiceRatings';
 import { GreenCard } from './src/GreenCard';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
@@ -22,8 +23,9 @@ import { addNotificationResponseListener, getLastNotificationResponse, registerP
 import { nativeGoogleSignIn } from './src/nativeGoogleSignIn';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image, Pressable, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardScrollView as ScrollView, useKeyboardVisible } from './src/KeyboardLayout';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SvgProps } from 'react-native-svg';
 import BusIcon from './assets/stc-icons/bus-3-svgrepo-com.svg';
 import EditIcon from './assets/stc-icons/edit-3-svgrepo-com.svg';
@@ -35,7 +37,6 @@ import MedalIcon from './assets/stc-icons/medal-svgrepo-com.svg';
 import MedicalIcon from './assets/stc-icons/medical-kit-svgrepo-com.svg';
 import MaintenanceIcon from './assets/stc-icons/maintenance-electric-car-svgrepo-com.svg';
 import MessagesIcon from './assets/stc-icons/messages-2-svgrepo-com.svg';
-import ShareIcon from './assets/stc-icons/share-nodes-svgrepo-com.svg';
 import StudentIcon from './assets/stc-icons/student-person-4-svgrepo-com.svg';
 import TeamIcon from './assets/stc-icons/team-svgrepo-com.svg';
 import UserIcon from './assets/stc-icons/user-svgrepo-com.svg';
@@ -92,6 +93,8 @@ export default function App() {
 }
 
 function ResidenceApp() {
+  const keyboardVisible = useKeyboardVisible();
+  const safeAreaInsets = useSafeAreaInsets();
   const { rtl, language } = useLanguage();
   const Alert = useLocalizedAlert();
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -464,13 +467,14 @@ function ResidenceApp() {
     const pages: Page[] = ['home', 'inbox', 'profile'];
     const current = pages.indexOf(page);
     const delta = (endX - touchStartX.current) * (rtl ? -1 : 1);
-    if (current < 0 || Math.abs(delta) < 90 || Math.abs(endY - touchStartY.current) > Math.abs(delta) * .65) return;
+    if (keyboardVisible || current < 0 || Math.abs(delta) < 90 || Math.abs(endY - touchStartY.current) > Math.abs(delta) * .65) return;
     const nextIndex = Math.max(0, Math.min(pages.length - 1, current + (delta < 0 ? 1 : -1)));
     setPage(pages[nextIndex]);
   };
 
   return <SafeAreaView style={[styles.root, { direction: rtl ? 'rtl' : 'ltr' }]} onTouchStart={event => { touchStartX.current = event.nativeEvent.pageX; touchStartY.current = event.nativeEvent.pageY; }} onTouchEnd={event => onSwipeEnd(event.nativeEvent.pageX, event.nativeEvent.pageY)}>
     <StatusBar style="dark" hidden={false} />
+    <KeyboardAvoidingView style={{ flex: 1 }} keyboardVerticalOffset={safeAreaInsets.top} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     {online !== true ? <OfflineScreen onRetry={retryConnection} checking={checkingConnection} /> : <>
     <ScreenTransition screen={page} rtl={rtl}>
     {page === 'welcome' && <ScrollView contentContainerStyle={styles.welcomeScroll}>
@@ -500,7 +504,7 @@ function ResidenceApp() {
 
     {page === 'inbox' && <><Header title={role === 'student' ? 'Mes signalements' : 'Boîte de réception'} /><ScrollView contentContainerStyle={styles.formScroll}><ResidenceInbox role={role} residenceId={backendProfile?.residence_id ?? ''} service={role === 'staff' ? backendProfile?.service ?? service : null} userId={backendProfile?.id ?? ''} /></ScrollView></>}
 
-    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><ProfilePhoto key={avatarRevision} userId={backendProfile?.id ?? ""} avatarOnly /><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name || oauthName || 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><MajorUpdates userId={backendProfile?.id ?? ""} installedVersion={Updates?.runtimeVersion ?? Constants.expoConfig?.version ?? ""} refreshKey={releaseRefreshKey} /><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<ProfilePhoto userId={backendProfile?.id ?? ""} onSaved={() => setAvatarRevision(value => value + 1)} /><Pressable accessibilityRole="button" style={styles.settingsRow} onPress={updateStatus === 'ready' && Updates ? () => { void Updates.reloadAsync(); } : checkForAppUpdate}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>{updateStatus === 'ready' ? 'Installer la mise à jour' : 'Vérifier les mises à jour'}</Text><Text style={styles.listSub}>{updateStatus === 'checking' ? 'Vérification…' : updateStatus === 'ready' ? 'Mise à jour téléchargée · redémarrer' : 'Version de l’application'}</Text></View><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><Text style={styles.sectionLabel}>DÉCOUVRIR STC</Text><View style={styles.settingsCard}>{['STC Officiel', 'Projets STC', 'À propos de l’application'].map((x, i) => <Pressable key={x} style={styles.settingsRow} onPress={() => Alert.alert(x, i === 0 ? 'stc-official.netlify.app' : 'Découvrez les projets de STC.')}><View style={styles.settingsIcon}>{i === 0 ? <ShareIcon width={17} height={17} /> : i === 1 ? <TeamIcon width={17} height={17} /> : <HouseIcon width={17} height={17} />}</View><Text style={styles.settingsText}>{x}</Text><Text style={styles.arrow}>›</Text></Pressable>)}</View><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></ScrollView></>}
+    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><ProfilePhoto key={avatarRevision} userId={backendProfile?.id ?? ""} avatarOnly /><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name || oauthName || 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><MajorUpdates userId={backendProfile?.id ?? ""} installedVersion={Updates?.runtimeVersion ?? Constants.expoConfig?.version ?? ""} refreshKey={releaseRefreshKey} /><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<ProfilePhoto userId={backendProfile?.id ?? ""} onSaved={() => setAvatarRevision(value => value + 1)} /><Pressable accessibilityRole="button" style={styles.settingsRow} onPress={updateStatus === 'ready' && Updates ? () => { void Updates.reloadAsync(); } : checkForAppUpdate}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>{updateStatus === 'ready' ? 'Installer la mise à jour' : 'Vérifier les mises à jour'}</Text><Text style={styles.listSub}>{updateStatus === 'checking' ? 'Vérification…' : updateStatus === 'ready' ? 'Mise à jour téléchargée · redémarrer' : 'Version de l’application'}</Text></View><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><DiscoverSTC /><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></ScrollView></>}
 
     {page === 'home' && <><Header title={isStaff ? 'Espace service' : 'Accueil'} right={<Pressable style={styles.headerBubble} onPress={() => setPage('inbox')}><MessagesIcon width={19} height={19} /></Pressable>} /><ScrollView contentContainerStyle={styles.homeScroll}>
       {isStaff && role === 'staff' && <View style={styles.pendingStrip}></View>}
@@ -515,8 +519,9 @@ function ResidenceApp() {
     </ScrollView></>}
 
     </ScreenTransition>
-    {['home','inbox','profile'].includes(page) && <BottomNavigation items={navItems} selected={tab} onSelect={index => setPage((['home', 'inbox', 'profile'] as const)[index])} />}
+    {!keyboardVisible && ['home','inbox','profile'].includes(page) && <BottomNavigation items={navItems} selected={tab} onSelect={index => setPage((['home', 'inbox', 'profile'] as const)[index])} />}
     </>}
+    </KeyboardAvoidingView>
   </SafeAreaView>;
 }
 
