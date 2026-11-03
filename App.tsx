@@ -15,7 +15,7 @@ import { supabase, supabaseConfigured } from './src/supabase';
 import type * as ExpoUpdates from 'expo-updates';
 import type * as ExpoNotifications from 'expo-notifications';
 import { addNotificationResponseListener, getLastNotificationResponse, registerPushNotifications } from './src/pushNotifications';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { nativeGoogleSignIn } from './src/nativeGoogleSignIn';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -106,8 +106,10 @@ function ResidenceApp() {
       Alert.alert('Mise à jour prête', 'La mise à jour est téléchargée. Redémarrez l’application pour l’installer.');
     } catch (error) { setUpdateStatus('idle'); Alert.alert('Vérification impossible', error instanceof Error ? error.message : 'Réessayez plus tard.'); }
   };
-  React.useEffect(() => { GoogleSignin.configure({ webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, offlineAccess: false }); }, []);
+  React.useEffect(() => { nativeGoogleSignIn?.GoogleSignin.configure({ webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, offlineAccess: false }); }, []);
   const signInWithGoogle = async () => {
+    if (!nativeGoogleSignIn) { Alert.alert('Connexion Google', 'Pour vous connecter avec Google, ouvrez la version APK de STC Résidence. Expo Go permet de consulter le design.'); return; }
+    const { GoogleSignin, statusCodes } = nativeGoogleSignIn;
     if (!supabaseConfigured) { Alert.alert('Supabase non configuré', 'Ajoutez l’URL et la clé publique de votre projet Supabase dans le fichier .env, puis redémarrez Expo.'); return; }
     if (googleLoading) return;
     setGoogleLoading(true);
@@ -464,7 +466,7 @@ function ResidenceApp() {
   };
 
   return <SafeAreaView style={[styles.root, { direction: rtl ? 'rtl' : 'ltr' }]} onTouchStart={event => { touchStartX.current = event.nativeEvent.pageX; touchStartY.current = event.nativeEvent.pageY; }} onTouchEnd={event => onSwipeEnd(event.nativeEvent.pageX, event.nativeEvent.pageY)}>
-    <StatusBar style={page === 'welcome' ? 'light' : 'dark'} />
+    <StatusBar style="dark" hidden={false} />
     {online !== true ? <OfflineScreen onRetry={retryConnection} checking={checkingConnection} /> : <>
     <ScreenTransition screen={page} rtl={rtl}>
     {page === 'welcome' && <ScrollView contentContainerStyle={styles.welcomeScroll}>

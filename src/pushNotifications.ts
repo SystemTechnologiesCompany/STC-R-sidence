@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import type * as ExpoNotifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
@@ -6,6 +6,7 @@ import { supabase } from './supabase';
 type NotificationsModule = typeof ExpoNotifications;
 let Notifications: NotificationsModule | null = null;
 try {
+  if (Constants.executionEnvironment !== ExecutionEnvironment.StoreClient) {
   Notifications = require('expo-notifications') as NotificationsModule;
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -15,6 +16,7 @@ try {
       shouldShowList: true,
     }),
   });
+  }
 } catch {
   // Expo Go or an older installed native client may not include this module.
 }
