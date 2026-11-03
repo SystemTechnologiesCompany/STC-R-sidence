@@ -3,7 +3,7 @@
     "name": "STC Résidence",
     "slug": "stc-residence",
     "scheme": "stc-residence",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "runtimeVersion": { "policy": "appVersion" },
     "updates": {
       "url": "https://u.expo.dev/117a51a2-7ba5-4c3d-bb65-958358de4b65",
@@ -14,6 +14,7 @@
     "icon": "./assets/launcher-icon.png",
     "userInterfaceStyle": "light",
     "plugins": [
+      ["expo-image-picker", { "photosPermission": "Autoriser STC Résidence à sélectionner vos photos.", "cameraPermission": false, "microphonePermission": false }],
       "expo-router",
       "@react-native-google-signin/google-signin",
       [

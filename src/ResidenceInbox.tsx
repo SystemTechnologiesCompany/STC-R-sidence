@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput, useLanguage, useLocalizedAlert } from './i18n';
 import { supabase } from './supabase';
+import { StoredPhoto } from './photos';
 
 type Role = 'student' | 'staff' | 'manager';
 type Report = {
@@ -9,6 +10,7 @@ type Report = {
   student_id: string;
   subject: string;
   details: string;
+  photo_path: string | null;
   service: string;
   status: 'queued' | 'in_progress' | 'done';
   created_at: string;
@@ -38,7 +40,7 @@ export function ResidenceInbox({ role, residenceId, service, userId }: {
     if (!userId || !residenceId) { setReports([]); setLoading(false); return; }
     setLoading(true);
     let query = supabase.from('reports')
-      .select('id,student_id,subject,details,service,status,created_at')
+      .select('id,student_id,subject,details,photo_path,service,status,created_at')
       .order('created_at', { ascending: false });
     if (role === 'student') query = query.eq('student_id', userId);
     else {
@@ -136,6 +138,7 @@ export function ResidenceInbox({ role, residenceId, service, userId }: {
           <ScrollView style={styles.thread} contentContainerStyle={{ paddingVertical: 14, gap: 10 }}>
             {selected && <View style={styles.originalMessage}><Text raw style={styles.messageLabel}>Signalement · {dateLabel(selected.created_at)}</Text><Text raw style={styles.messageBody}>{selected.details}</Text></View>}
             {selected && role !== 'student' && selected.status !== 'done' && <Pressable accessibilityRole="button" disabled={completing} onPress={() => { void markComplete(); }} style={[styles.completeButton, completing && { opacity: .6 }]}><Text style={styles.completeButtonText}>{completing ? 'Clôture…' : 'Marquer comme terminé'}</Text></Pressable>}
+            {selected?.photo_path && <StoredPhoto path={selected.photo_path} />}
             {refreshingMessages && <ActivityIndicator color="#16845A" />}
             {messages.map(message => <View key={message.id} style={[styles.bubble, message.sender_id === userId ? styles.ownBubble : styles.otherBubble]}><Text raw style={styles.messageBody}>{message.body}</Text><Text raw style={styles.messageDate}>{dateLabel(message.created_at)}</Text></View>)}
           </ScrollView>

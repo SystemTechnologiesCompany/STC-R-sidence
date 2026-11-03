@@ -3,10 +3,10 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Text, TextInput, useLanguage } from './i18n';
 import { supabase } from './supabase';
 
-type Profile = { name: string; firstSetAt: number };
-type ServerProfile = { id: string; full_name: string; name_last_changed_at: string };
+type Profile = { name: string; firstSetAt: number; changesUsed: number };
+type ServerProfile = { id: string; full_name: string; name_last_changed_at: string; name_changes_used: number };
 const waitingPeriod = 14 * 86400000;
-export function useProfileName(serverProfile: ServerProfile | null) {
+export function useProfileName(serverProfile: ServerProfile | null, onSaved?: (profile: ServerProfile) => void) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -15,22 +15,24 @@ export function useProfileName(serverProfile: ServerProfile | null) {
     setProfile(serverProfile ? {
       name: serverProfile.full_name,
       firstSetAt: Date.parse(serverProfile.name_last_changed_at),
+      changesUsed: serverProfile.name_changes_used ?? 0,
     } : null);
     setReady(true);
-  }, [serverProfile?.id, serverProfile?.full_name, serverProfile?.name_last_changed_at]);
+  }, [serverProfile?.id, serverProfile?.full_name, serverProfile?.name_last_changed_at, serverProfile?.name_changes_used]);
   const save = async (draft: string): Promise<string | null> => {
     if (!ready || !serverProfile || savingRef.current) return 'Connectez-vous pour enregistrer votre nom.';
     const name = draft.trim().replace(/\s+/g, ' ');
     if (name.length < 2 || name.length > 60) return 'Le nom doit contenir entre 2 et 60 caractères.';
     if (name === profile?.name) return null;
-    if (profile && Date.now() < profile.firstSetAt + waitingPeriod) return 'Votre nom est modifiable 14 jours après sa première saisie.';
+    if (profile && profile.changesUsed >= 2 && Date.now() < profile.firstSetAt + waitingPeriod) return 'Votre prochaine modification sera disponible 14 jours après le dernier changement.';
     savingRef.current = true; setSaving(true);
     try {
       const { data, error } = await supabase.rpc('change_my_profile_name', { p_full_name: name });
       if (error) return error.message;
       const updated = Array.isArray(data) ? data[0] : data;
       if (!updated?.full_name || !updated?.name_last_changed_at) return 'Le serveur n’a pas confirmé le nouveau nom.';
-      setProfile({ name: updated.full_name, firstSetAt: Date.parse(updated.name_last_changed_at) });
+      setProfile({ name: updated.full_name, firstSetAt: Date.parse(updated.name_last_changed_at), changesUsed: updated.name_changes_used ?? 2 });
+      onSaved?.(updated as ServerProfile);
       return null;
     } catch (error) { return error instanceof Error ? error.message : 'Impossible d’enregistrer le nom. Réessayez.'; }
     finally { savingRef.current = false; setSaving(false); }
@@ -43,11 +45,14 @@ export function ProfileNameEditor({ account, onClose }: { account: ReturnType<ty
   const [draft, setDraft] = useState(account.profile?.name ?? '');
   const [error, setError] = useState<string | null>(null);
   const unlockAt = account.profile ? account.profile.firstSetAt + waitingPeriod : 0;
-  const locked = Date.now() < unlockAt;
+  const remaining = Math.max(0, 2 - (account.profile?.changesUsed ?? 0));
+  const locked = remaining === 0 && Date.now() < unlockAt;
   return <View style={styles.editor}>
     <Text style={styles.label}>Nom complet</Text>
     <TextInput accessibilityLabel={t('Nom complet')} value={draft} onChangeText={setDraft} editable={account.ready && !locked && !account.saving} maxLength={60} autoCapitalize="words" placeholder="Saisissez votre nom" style={styles.input} />
-    <Text style={styles.hint}>Votre nom est modifiable 14 jours après sa première saisie.</Text>
+    <Text raw style={styles.hint}>{rtl
+      ? remaining > 0 ? `يمكنك تغيير اسمك ${remaining} مرة قبل بدء مهلة 14 يومًا.` : 'يمكنك تغيير اسمك مرة كل 14 يومًا بعد آخر تغيير.'
+      : remaining > 0 ? `${remaining} modification(s) disponible(s) avant le délai de 14 jours.` : 'Votre nom est modifiable tous les 14 jours après le dernier changement.'}</Text>
     {locked && <Text raw style={styles.hint}>{rtl ? 'متاح ابتداءً من ' : 'Disponible à partir du '}{new Date(unlockAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text>}
     {!account.ready && <Text style={styles.error}>Veuillez patienter ou réouvrir l’application.</Text>}
     {error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}

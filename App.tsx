@@ -7,6 +7,7 @@ import { ManagerRequests } from './src/ManagerRequests';
 import { ResidenceInbox } from './src/ResidenceInbox';
 import { ManagerTeam } from './src/ManagerTeam';
 import { ManagerAnnouncements } from './src/ManagerAnnouncements';
+import { ProfilePhoto, ReportPhotoPicker, uploadPhoto, removePhoto, photoError, type SelectedPhoto } from './src/photos';
 import type { ResidenceRequest } from './src/requests';
 import { usePageNavigation, type Page } from './src/usePageNavigation';
 import { ScreenTransition } from './src/motion';
@@ -51,7 +52,7 @@ function AppLogo({ size = 32 }: { size?: number }) {
 }
 
 type Role = 'student' | 'staff' | 'manager';
-type BackendProfile = { id: string; full_name: string; name_last_changed_at: string; residence_id: string; role: Role; service: string | null; role_status: 'active' | 'pending' | 'rejected' };
+type BackendProfile = { id: string; full_name: string; name_last_changed_at: string; name_changes_used: number; residence_id: string; role: Role; service: string | null; role_status: 'active' | 'pending' | 'rejected' };
 type ServiceIcon = React.ComponentType<SvgProps>;
 const C = { green: '#16845A', dark: '#103D2E', mint: '#EAF7F0', lime: '#B9ED77', ink: '#18241F', muted: '#78877F', line: '#E6EDE8', white: '#FFFFFF', canvas: '#F6F9F6', orange: '#EF9C54' };
 const residences = [
@@ -91,6 +92,7 @@ function ResidenceApp() {
   const { rtl, language } = useLanguage();
   const Alert = useLocalizedAlert();
   const [googleLoading, setGoogleLoading] = useState(false);
+  const googleSignInBusy = useRef(false);
   const [oauthName, setOauthName] = useState('');
   const [backendProfile, setBackendProfile] = useState<BackendProfile | null>(null);
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'ready'>('idle');
@@ -111,15 +113,21 @@ function ResidenceApp() {
     if (!nativeGoogleSignIn) { Alert.alert('Connexion Google', 'Pour vous connecter avec Google, ouvrez la version APK de STC Résidence. Expo Go permet de consulter le design.'); return; }
     const { GoogleSignin, statusCodes } = nativeGoogleSignIn;
     if (!supabaseConfigured) { Alert.alert('Supabase non configuré', 'Ajoutez l’URL et la clé publique de votre projet Supabase dans le fichier .env, puis redémarrez Expo.'); return; }
-    if (googleLoading) return;
+    if (googleSignInBusy.current) return;
+    googleSignInBusy.current = true;
     setGoogleLoading(true);
+    let loginStage = 'Google';
     try {
       if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) throw new Error('Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID to .env and restart Expo.');
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      // Clear this app's remembered Google account before interactive sign-in.
+      // Android then presents its native account chooser on each button press.
+      await GoogleSignin.signOut();
       const response = await GoogleSignin.signIn();
       if (response.type !== 'success') return;
       const idToken = response.data.idToken;
       if (!idToken) throw new Error('Google did not return an ID token. Check the Android and Web OAuth client configuration.');
+      loginStage = 'Supabase Auth';
       const { data: authData, error: sessionError } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken });
       if (sessionError) throw sessionError;
       const signedInUser = authData.user;
@@ -127,8 +135,9 @@ function ResidenceApp() {
         ? signedInUser.user_metadata.full_name
         : signedInUser.email?.split('@')[0] ?? '';
       setOauthName(googleName);
+      loginStage = 'Profil Supabase';
       const { data: profileData, error: profileError } = await supabase.from('profiles')
-        .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status').eq('id', signedInUser.id).maybeSingle();
+        .select('id,full_name,name_last_changed_at,name_changes_used,residence_id,role,service,role_status').eq('id', signedInUser.id).maybeSingle();
       if (profileError) throw profileError;
       if (profileData) {
         const profile = profileData as BackendProfile;
@@ -149,8 +158,11 @@ function ResidenceApp() {
       }
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === statusCodes.SIGN_IN_CANCELLED) return;
-      Alert.alert('Connexion Google', error instanceof Error ? error.message : 'Impossible de se connecter avec Google.');
-    } finally { setGoogleLoading(false); }
+      const details = error && typeof error === 'object' ? error as { message?: unknown; code?: unknown } : null;
+      const message = typeof details?.message === 'string' ? details.message : 'Impossible de se connecter avec Google.';
+      const code = typeof details?.code === 'string' || typeof details?.code === 'number' ? ` (${details.code})` : '';
+      Alert.alert('Connexion Google', `${loginStage}${code}\n${message}`, true);
+    } finally { googleSignInBusy.current = false; setGoogleLoading(false); }
   };
   const [online, setOnline] = useState<boolean | null>(null);
   const [checkingConnection, setCheckingConnection] = useState(false);
@@ -170,7 +182,10 @@ function ResidenceApp() {
     void retryConnection();
     return unsubscribe;
   }, []);
-  const account = useProfileName(backendProfile);
+  const account = useProfileName(backendProfile, updated => {
+    setBackendProfile(current => current?.id === updated.id ? { ...current, ...updated } : current);
+    setOauthName(updated.full_name);
+  });
   const [editingName, setEditingName] = useState(false);
   const { page, setPage, goBack } = usePageNavigation();
   const [role, setRole] = useState<Role>('student');
@@ -183,6 +198,8 @@ function ResidenceApp() {
   const [reportSubject, setReportSubject] = useState<string | null>(null);
   const [requests, setRequests] = useState<ResidenceRequest[]>([]);
   const [reportSending, setReportSending] = useState(false);
+  const [reportPhoto, setReportPhoto] = useState<SelectedPhoto | null>(null);
+  const [avatarRevision, setAvatarRevision] = useState(0);
   React.useEffect(() => {
     if (!backendProfile || !['manager', 'staff'].includes(backendProfile.role) || !backendProfile.residence_id) { setRequests([]); return; }
     let alive = true;
@@ -212,7 +229,7 @@ function ResidenceApp() {
     let alive = true;
     const restoreAccount = async (userId: string) => {
       const { data, error } = await supabase.from('profiles')
-        .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status')
+        .select('id,full_name,name_last_changed_at,name_changes_used,residence_id,role,service,role_status')
         .eq('id', userId).maybeSingle();
       if (!alive) return;
       if (error) {
@@ -353,6 +370,7 @@ function ResidenceApp() {
     if (!details) { Alert.alert('Un détail est nécessaire', 'Décrivez brièvement le problème avant l’envoi.'); return; }
     if (reportSending) return;
     setReportSending(true);
+    let uploadedPhoto: string | null = null;
     try {
       const profile = backendProfile ?? await registerResidenceProfile('student');
       if (!profile) return;
@@ -360,27 +378,32 @@ function ResidenceApp() {
         Alert.alert('Compte étudiant requis', 'Seuls les comptes étudiants peuvent envoyer un signalement.');
         return;
       }
+      if (reportPhoto) uploadedPhoto = await uploadPhoto(profile.id, reportPhoto);
       const { error } = await supabase.from('reports').insert({
         student_id: profile.id,
         residence_id: profile.residence_id,
         service,
         subject: reportSubject,
         details,
+        photo_path: uploadedPhoto,
       });
       if (error) throw error;
+      uploadedPhoto = null;
+      setReportPhoto(null);
       Alert.alert('Signalement envoyé', 'Votre demande a été transmise au service concerné.');
       setReportSubject(null);
       setReport('');
       goBack();
     } catch (error) {
-      Alert.alert('Signalement non envoyé', error instanceof Error ? error.message : 'Vérifiez votre connexion puis réessayez.');
+      if (uploadedPhoto) void removePhoto(uploadedPhoto);
+      Alert.alert('Signalement non envoyé', photoError(error), true);
     } finally { setReportSending(false); }
   };
 
   const checkStaffApproval = async () => {
     if (!backendProfile?.id) return;
     const { data, error } = await supabase.from('profiles')
-      .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status').eq('id', backendProfile.id).maybeSingle();
+      .select('id,full_name,name_last_changed_at,name_changes_used,residence_id,role,service,role_status').eq('id', backendProfile.id).maybeSingle();
     if (error) { Alert.alert('Vérification impossible', error.message); return; }
     if (!data) { Alert.alert('Compte introuvable', 'Reconnectez-vous puis réessayez.'); return; }
     const profile = data as BackendProfile;
@@ -492,11 +515,11 @@ function ResidenceApp() {
 
     {page === 'services' && <><Header title="Choisir un service" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.residenceSummary}><HouseIcon width={23} height={23} /><View><Text style={styles.listTitle}>{residence}</Text><Text style={styles.listSub}>Ouargla · {roleLabel}</Text></View></View><Text style={styles.pageTitle}>Quel service souhaitez-vous joindre ?</Text><Text style={styles.bodyMuted}>Chaque signalement sera transmis à l’équipe concernée.</Text>{services.filter(item => role !== 'staff' || !staffAssignment || item.name === staffAssignment.service).map((item) => <Pressable key={item.name} onPress={() => selectService(item.name)} style={({ pressed }) => [styles.serviceRow, pressed && styles.pressed]}><View style={[styles.serviceIcon, { backgroundColor: item.tint }]}><item.icon width={24} height={24} /></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>{item.name}</Text><Text style={styles.listSub}>{item.caption}{language === 'fr' ? ` · ${item.ar}` : ''}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}</ScrollView></>}
 
-    {page === 'report' && !isStaff && <><Header title="Nouveau signalement" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><Tag>{service.toUpperCase()}</Tag><Text style={[styles.pageTitle, { marginTop: 14 }]}>Dites-nous ce qui se passe.</Text><Text style={styles.bodyMuted}>Votre signalement sera transmis au service {service.toLowerCase()} de {residence}.</Text><Text style={styles.sectionLabel}>SUJET</Text><View style={styles.chipWrap}>{['Propreté', 'Équipement', 'Qualité', 'Autre'].map(x => { const active = reportSubject === x; return <Pressable key={x} accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={() => setReportSubject(x)} style={[styles.choiceChip, active && styles.chipSelected]}><Text style={[styles.choiceText, active && { color: C.green, fontWeight: '800' }]}>{active ? '✓  ' : ''}{x}</Text></Pressable>; })}</View><Text style={styles.sectionLabel}>DÉTAILS</Text><TextInput value={report} onChangeText={setReport} multiline placeholder="Décrivez le problème et indiquez où il se trouve…" placeholderTextColor="#A1ADA6" style={styles.textArea} /><Text style={styles.sectionLabel}>PHOTO (FACULTATIF)</Text><Pressable onPress={() => Alert.alert('Photo', 'L’ajout de photo sera activé dans la version connectée.')} style={styles.upload}><Text style={{ fontSize: 22, color: C.green }}>＋</Text><Text style={styles.uploadText}>Ajouter une photo</Text></Pressable><Button title={reportSending ? 'Envoi…' : 'Envoyer le signalement  →'} onPress={() => { void submitReport(); }} /></ScrollView></>}
+    {page === 'report' && !isStaff && <><Header title="Nouveau signalement" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><Tag>{service.toUpperCase()}</Tag><Text style={[styles.pageTitle, { marginTop: 14 }]}>Dites-nous ce qui se passe.</Text><Text style={styles.bodyMuted}>Votre signalement sera transmis au service {service.toLowerCase()} de {residence}.</Text><Text style={styles.sectionLabel}>SUJET</Text><View style={styles.chipWrap}>{['Propreté', 'Équipement', 'Qualité', 'Autre'].map(x => { const active = reportSubject === x; return <Pressable key={x} accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={() => setReportSubject(x)} style={[styles.choiceChip, active && styles.chipSelected]}><Text style={[styles.choiceText, active && { color: C.green, fontWeight: '800' }]}>{active ? '✓  ' : ''}{x}</Text></Pressable>; })}</View><Text style={styles.sectionLabel}>DÉTAILS</Text><TextInput value={report} onChangeText={setReport} multiline placeholder="Décrivez le problème et indiquez où il se trouve…" placeholderTextColor="#A1ADA6" style={styles.textArea} /><Text style={styles.sectionLabel}>PHOTO (FACULTATIF)</Text><ReportPhotoPicker value={reportPhoto} onChange={setReportPhoto} disabled={reportSending} /><Button title={reportSending ? 'Envoi…' : 'Envoyer le signalement  →'} onPress={() => { void submitReport(); }} /></ScrollView></>}
 
     {page === 'inbox' && <><Header title={role === 'student' ? 'Mes signalements' : 'Boîte de réception'} /><ScrollView contentContainerStyle={styles.formScroll}><ResidenceInbox role={role} residenceId={backendProfile?.residence_id ?? ''} service={role === 'staff' ? backendProfile?.service ?? service : null} userId={backendProfile?.id ?? ''} /></ScrollView></>}
 
-    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><View style={styles.avatar}><UserIcon width={28} height={28} /></View><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name || oauthName || 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<Pressable style={styles.settingsRow} onPress={() => Alert.alert('Photo de profil', 'La photo de profil pourra être ajoutée ou modifiée à tout moment.')}><View style={styles.settingsIcon}><UserIcon width={17} height={17} /></View><Text style={styles.settingsText}>Photo de profil</Text><Text style={styles.arrow}>›</Text></Pressable><Pressable accessibilityRole="button" style={styles.settingsRow} onPress={updateStatus === 'ready' && Updates ? () => { void Updates.reloadAsync(); } : checkForAppUpdate}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>{updateStatus === 'ready' ? 'Installer la mise à jour' : 'Vérifier les mises à jour'}</Text><Text style={styles.listSub}>{updateStatus === 'checking' ? 'Vérification…' : updateStatus === 'ready' ? 'Mise à jour téléchargée · redémarrer' : 'Version de l’application'}</Text></View><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><Text style={styles.sectionLabel}>DÉCOUVRIR STC</Text><View style={styles.settingsCard}>{['STC Officiel', 'Projets STC', 'À propos de l’application'].map((x, i) => <Pressable key={x} style={styles.settingsRow} onPress={() => Alert.alert(x, i === 0 ? 'stc-official.netlify.app' : 'Découvrez les projets de STC.')}><View style={styles.settingsIcon}>{i === 0 ? <ShareIcon width={17} height={17} /> : i === 1 ? <TeamIcon width={17} height={17} /> : <HouseIcon width={17} height={17} />}</View><Text style={styles.settingsText}>{x}</Text><Text style={styles.arrow}>›</Text></Pressable>)}</View><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></ScrollView></>}
+    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><ProfilePhoto key={avatarRevision} userId={backendProfile?.id ?? ""} avatarOnly /><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name || oauthName || 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<ProfilePhoto userId={backendProfile?.id ?? ""} onSaved={() => setAvatarRevision(value => value + 1)} /><Pressable accessibilityRole="button" style={styles.settingsRow} onPress={updateStatus === 'ready' && Updates ? () => { void Updates.reloadAsync(); } : checkForAppUpdate}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>{updateStatus === 'ready' ? 'Installer la mise à jour' : 'Vérifier les mises à jour'}</Text><Text style={styles.listSub}>{updateStatus === 'checking' ? 'Vérification…' : updateStatus === 'ready' ? 'Mise à jour téléchargée · redémarrer' : 'Version de l’application'}</Text></View><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><Text style={styles.sectionLabel}>DÉCOUVRIR STC</Text><View style={styles.settingsCard}>{['STC Officiel', 'Projets STC', 'À propos de l’application'].map((x, i) => <Pressable key={x} style={styles.settingsRow} onPress={() => Alert.alert(x, i === 0 ? 'stc-official.netlify.app' : 'Découvrez les projets de STC.')}><View style={styles.settingsIcon}>{i === 0 ? <ShareIcon width={17} height={17} /> : i === 1 ? <TeamIcon width={17} height={17} /> : <HouseIcon width={17} height={17} />}</View><Text style={styles.settingsText}>{x}</Text><Text style={styles.arrow}>›</Text></Pressable>)}</View><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></ScrollView></>}
 
     {page === 'home' && <><Header title={isStaff ? 'Espace service' : 'Accueil'} right={<Pressable style={styles.headerBubble} onPress={() => setPage('inbox')}><MessagesIcon width={19} height={19} /></Pressable>} /><ScrollView contentContainerStyle={styles.homeScroll}>
       {isStaff && role === 'staff' && <View style={styles.pendingStrip}></View>}

@@ -17,6 +17,7 @@ create table if not exists public.profiles (
   service text,
   role_status text not null default 'active' check (role_status in ('active', 'pending', 'rejected')),
   name_last_changed_at timestamptz not null default now(),
+  name_changes_used integer not null default 0 check (name_changes_used between 0 and 2),
   created_at timestamptz not null default now(),
   constraint profile_service_role check ((role = 'staff' and service is not null) or (role <> 'staff' and service is null))
 );
@@ -56,9 +57,15 @@ create policy "Authenticated users can view open residences and their own reside
   on public.residences for select to authenticated
   using (is_open or id = (select p.residence_id from public.profiles p where p.id = (select auth.uid())));
 
+create or replace function public.current_account_residence_id()
+returns uuid language sql stable security definer set search_path = ''
+as $$ select residence_id from public.profiles where id = (select auth.uid()); $$;
+revoke all on function public.current_account_residence_id() from public;
+grant execute on function public.current_account_residence_id() to authenticated;
+
 create policy "Users can view profiles in their residence"
   on public.profiles for select to authenticated
-  using (id = (select auth.uid()) or residence_id = (select p.residence_id from public.profiles p where p.id = (select auth.uid())));
+  using (id = (select auth.uid()) or residence_id = (select public.current_account_residence_id()));
 
 create policy "Users can create own student reports"
   on public.reports for insert to authenticated
