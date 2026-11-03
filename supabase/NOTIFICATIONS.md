@@ -82,6 +82,10 @@ values (
 );
 ```
 
-The insert sends the major-update notification to all registered devices. Do not use a GitHub source-code link; `download_url` must point to the APK asset. The update notification opens the app's profile area.
+The insert sends the major-update notification to all registered devices. Do not use a GitHub source-code link; `download_url` must be an HTTPS URL whose path ends in `.apk`, pointing to the APK asset. Use versions in `1.2.3` format. The update notification opens the app's profile area and refreshes its major-update card.
+
+The profile card reads `app_releases`, shows the highest version newer than the installed runtime, displays its release notes, and opens the APK download link. It checks again when the app returns to the foreground or when the user taps its check button. The user downloads the APK, opens the file, and approves Android's installation prompt. This does not silently install APKs. Keep the package and signing certificate the same and increment the Android version code for each release (the preview profile does this automatically).
+
+Install a build containing this card before relying on it for distribution. APKs that were built before this feature still need a shared download link or a compatible OTA update adding the card. Do not send photo-picker code by OTA to builds that lack its native module.
 
 The report form and conversations now write to Supabase. The migration enables realtime updates for reports and messages, and the webhooks send the push alerts after database inserts.
