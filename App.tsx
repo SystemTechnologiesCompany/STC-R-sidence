@@ -1,3 +1,4 @@
+import { ServiceRatings } from './src/ServiceRatings';
 import { GreenCard } from './src/GreenCard';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { OfflineScreen } from './src/OfflineScreen';
@@ -197,7 +198,7 @@ function ResidenceApp() {
   const [service, setService] = useState('Restauration');
   const [staffAssignment, setStaffAssignment] = useState<{ service: string; residence: string } | null>(null);
   const tab = page === 'inbox' ? 'Messages' : page === 'profile' ? 'Mon espace' : 'Accueil';
-  const [rating, setRating] = useState(0);
+
   const [report, setReport] = useState('');
   const [reportSubject, setReportSubject] = useState<string | null>(null);
   const [requests, setRequests] = useState<ResidenceRequest[]>([]);
@@ -420,21 +421,6 @@ function ResidenceApp() {
     Alert.alert('Toujours en attente', 'Le gestionnaire n’a pas encore validé votre demande.');
   };
 
-  const submitResidenceRating = async (value: number) => {
-    const profile = backendProfile;
-    if (!profile || profile.role !== 'student') {
-      Alert.alert('Connexion requise', 'Connectez-vous avec votre compte étudiant pour enregistrer une note.');
-      return;
-    }
-    setRating(value);
-    const { error } = await supabase.from('residence_ratings').upsert({
-      user_id: profile.id,
-      residence_id: profile.residence_id,
-      rating: value,
-    }, { onConflict: 'user_id,residence_id' });
-    if (error) Alert.alert('Note non enregistrée', error.message, true);
-  };
-
   React.useEffect(() => {
     if (!backendProfile || backendProfile.role !== 'student') { if (!backendProfile || backendProfile.role === 'student') setRequests([]); return; }
     let alive = true;
@@ -456,19 +442,6 @@ function ResidenceApp() {
       .subscribe();
     return () => { alive = false; void supabase.removeChannel(channel); };
   }, [backendProfile?.id, backendProfile?.role, backendProfile?.residence_id]);
-
-  React.useEffect(() => {
-    if (!backendProfile || backendProfile.role !== 'student') { setRating(0); return; }
-    let alive = true;
-    void supabase.from('residence_ratings').select('rating')
-      .eq('user_id', backendProfile.id).eq('residence_id', backendProfile.residence_id).maybeSingle()
-      .then(({ data, error }) => {
-        if (!alive) return;
-        if (error) console.warn('Could not load residence rating:', error.message);
-        else setRating(data?.rating ?? 0);
-      });
-    return () => { alive = false; };
-  }, [backendProfile?.id, backendProfile?.residence_id, backendProfile?.role]);
 
   const signOut = async () => {
     const { data } = await supabase.auth.getUser();
@@ -534,8 +507,9 @@ function ResidenceApp() {
       <View style={styles.greeting}><View><Text style={styles.greetingSmall}>{isStaff ? `TABLEAU DE BORD · ${service.toUpperCase()}` : new Date().toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</Text><Text raw style={styles.greetingTitle}>{isStaff ? (rtl ? 'مرحبًا بالفريق' : 'Bonjour, l’équipe') : `${rtl ? 'مرحبًا' : 'Bonjour'}${oauthName ? `, ${oauthName}` : account.profile ? `, ${account.profile.name}` : ''}`}</Text></View><View style={styles.avatarSmall}><UserIcon width={23} height={23} /></View></View>
       <GreenCard style={styles.homeHero}><View style={{ flex: 1 }}><Tag color={C.lime} bg="rgba(255,255,255,.12)">{residence.toUpperCase()}</Tag><Text style={styles.homeHeroTitle}>{isStaff ? 'Les demandes, à portée de main.' : 'Un petit geste peut améliorer la vie de tous.'}</Text><Text style={styles.homeHeroSub}>{isStaff ? 'Consultez les demandes de votre service.' : 'Votre voix compte dans votre résidence.'}</Text></View></GreenCard>
       {role === 'manager' && <ManagerRequests role={role} residence={residence} requests={requests} />}
-      {isStaff ? <ServiceRequests access={requestAccess} requests={requests} onOpenInbox={() => setPage('inbox')} /> : <><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Signaler un problème</Text><Text style={styles.stepHint}>1 / 3</Text></View><View style={styles.serviceGrid}>{services.map(item => <Pressable key={item.name} onPress={() => { setService(item.name); setPage('report'); }} style={({ pressed }) => [styles.serviceTile, pressed && { transform: [{ scale: .975 }], backgroundColor: C.mint }]}><View style={[styles.tileIcon, { backgroundColor: item.tint }]}><item.icon width={22} height={22} /></View><Text style={styles.tileTitle}>{item.name}</Text><Text style={styles.tileSub}>{item.caption}</Text></Pressable>)}</View><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Mes demandes</Text><Pressable onPress={() => setPage('inbox')}><Text style={styles.seeAll}>Tout voir →</Text></Pressable></View>{requests[0] ? <Pressable onPress={() => setPage('inbox')} style={styles.reportCard}><View style={styles.cardTop}><Tag color={requests[0].status === 'done' ? C.green : '#A96718'} bg={requests[0].status === 'done' ? C.mint : '#FFF1DB'}>{requests[0].status === 'done' ? 'TERMINÉ' : requests[0].adminRepliedAt ? 'EN COURS' : 'EN ATTENTE'}</Tag><Text raw style={styles.time}>{new Date(requests[0].createdAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text></View><Text raw style={[styles.listTitle, { marginTop: 12 }]}>{requests[0].title}</Text><Text style={styles.reportExcerpt}>{requests[0].service}</Text></Pressable> : <View style={styles.emptyCard}><View style={styles.emptyIcon}><Text style={{ color: C.green, fontSize: 22 }}>✓</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>Tout est à jour</Text><Text style={styles.listSub}>Vos nouvelles demandes apparaîtront ici.</Text></View></View>}<View style={styles.rateCard}><View style={{ flex: 1 }}><View style={styles.rateHeading}><MedalIcon width={20} height={20} /><Text style={styles.rateTitle}>Comment se passe la vie ici ?</Text></View><Text style={styles.rateSub}>Évaluez votre résidence</Text></View><View style={styles.stars}>{[1,2,3,4,5].map(n => <Pressable onPress={() => { void submitResidenceRating(n); }} key={n}><Text style={{ fontSize: 22, color: n <= rating ? '#EAA84A' : '#D5DDD7' }}>★</Text></Pressable>)}</View></View></>}
+      {isStaff ? <ServiceRequests access={requestAccess} requests={requests} onOpenInbox={() => setPage('inbox')} /> : <><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Signaler un problème</Text><Text style={styles.stepHint}>1 / 3</Text></View><View style={styles.serviceGrid}>{services.map(item => <Pressable key={item.name} onPress={() => { setService(item.name); setPage('report'); }} style={({ pressed }) => [styles.serviceTile, pressed && { transform: [{ scale: .975 }], backgroundColor: C.mint }]}><View style={[styles.tileIcon, { backgroundColor: item.tint }]}><item.icon width={22} height={22} /></View><Text style={styles.tileTitle}>{item.name}</Text><Text style={styles.tileSub}>{item.caption}</Text></Pressable>)}</View><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Mes demandes</Text><Pressable onPress={() => setPage('inbox')}><Text style={styles.seeAll}>Tout voir →</Text></Pressable></View>{requests[0] ? <Pressable onPress={() => setPage('inbox')} style={styles.reportCard}><View style={styles.cardTop}><Tag color={requests[0].status === 'done' ? C.green : '#A96718'} bg={requests[0].status === 'done' ? C.mint : '#FFF1DB'}>{requests[0].status === 'done' ? 'TERMINÉ' : requests[0].adminRepliedAt ? 'EN COURS' : 'EN ATTENTE'}</Tag><Text raw style={styles.time}>{new Date(requests[0].createdAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text></View><Text raw style={[styles.listTitle, { marginTop: 12 }]}>{requests[0].title}</Text><Text style={styles.reportExcerpt}>{requests[0].service}</Text></Pressable> : <View style={styles.emptyCard}><View style={styles.emptyIcon}><Text style={{ color: C.green, fontSize: 22 }}>✓</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>Tout est à jour</Text><Text style={styles.listSub}>Vos nouvelles demandes apparaîtront ici.</Text></View></View>}</>}
       {role === 'manager' && <View style={styles.quickGrid}><Pressable style={styles.quickCard} onPress={() => setPage('team')}><View style={styles.quickIcon}><TeamIcon width={21} height={21} /></View><Text style={styles.quickTitle}>Équipe</Text><Text style={styles.quickSub}>Demandes de rôles</Text></Pressable><Pressable style={styles.quickCard} onPress={() => setPage('team')}><View style={styles.quickIcon}><UserIcon width={21} height={21} /></View><Text style={styles.quickTitle}>Utilisateurs</Text><Text style={styles.quickSub}>Accès & modération</Text></Pressable></View>}
+      <ServiceRatings userId={backendProfile?.id ?? ""} residenceId={backendProfile?.residence_id ?? ""} canRate={backendProfile?.role === "student" && backendProfile.role_status === "active"} />
       {role === 'manager' && <ManagerAnnouncements residenceId={backendProfile?.residence_id ?? ''} />}
       <Pressable onPress={() => { setPage('profile'); }} style={styles.webLink}><Text style={{ color: C.green, fontWeight: '700' }}>Découvrir STC →</Text><Text style={{ color: C.muted, fontSize: 12 }}> stc-official.netlify.app</Text></Pressable>
     </ScrollView></>}
