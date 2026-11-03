@@ -1,38 +1,38 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Text, TextInput, useLanguage } from './i18n';
+import { supabase } from './supabase';
 
 type Profile = { name: string; firstSetAt: number };
-const key = 'stc.demo.profile.v1';
+type ServerProfile = { id: string; full_name: string; name_last_changed_at: string };
 const waitingPeriod = 14 * 86400000;
-export function useProfileName() {
+export function useProfileName(serverProfile: ServerProfile | null) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   useEffect(() => {
-    let active = true;
-    AsyncStorage.getItem(key).then(value => {
-      const saved = value ? JSON.parse(value) : null;
-      if (saved && (typeof saved.name !== 'string' || !Number.isFinite(saved.firstSetAt))) throw new Error('Invalid profile');
-      if (active) { setProfile(saved); setReady(true); }
-    }).catch(() => { if (active) setReady(false); });
-    return () => { active = false; };
-  }, []);
+    setProfile(serverProfile ? {
+      name: serverProfile.full_name,
+      firstSetAt: Date.parse(serverProfile.name_last_changed_at),
+    } : null);
+    setReady(true);
+  }, [serverProfile?.id, serverProfile?.full_name, serverProfile?.name_last_changed_at]);
   const save = async (draft: string): Promise<string | null> => {
-    if (!ready || savingRef.current) return 'Veuillez patienter ou réouvrir l’application.';
+    if (!ready || !serverProfile || savingRef.current) return 'Connectez-vous pour enregistrer votre nom.';
     const name = draft.trim().replace(/\s+/g, ' ');
     if (name.length < 2 || name.length > 60) return 'Le nom doit contenir entre 2 et 60 caractères.';
     if (name === profile?.name) return null;
     if (profile && Date.now() < profile.firstSetAt + waitingPeriod) return 'Votre nom est modifiable 14 jours après sa première saisie.';
     savingRef.current = true; setSaving(true);
     try {
-      const next = { name, firstSetAt: profile?.firstSetAt ?? Date.now() };
-      await AsyncStorage.setItem(key, JSON.stringify(next));
-      setProfile(next);
+      const { data, error } = await supabase.rpc('change_my_profile_name', { p_full_name: name });
+      if (error) return error.message;
+      const updated = Array.isArray(data) ? data[0] : data;
+      if (!updated?.full_name || !updated?.name_last_changed_at) return 'Le serveur n’a pas confirmé le nouveau nom.';
+      setProfile({ name: updated.full_name, firstSetAt: Date.parse(updated.name_last_changed_at) });
       return null;
-    } catch { return 'Impossible d’enregistrer le nom. Réessayez.'; }
+    } catch (error) { return error instanceof Error ? error.message : 'Impossible d’enregistrer le nom. Réessayez.'; }
     finally { savingRef.current = false; setSaving(false); }
   };
   return { profile, ready, saving, save };

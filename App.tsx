@@ -2,14 +2,19 @@ import { GreenCard } from './src/GreenCard';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { OfflineScreen } from './src/OfflineScreen';
 import { ProfileNameEditor, useProfileName } from './src/ProfileName';
-import { checkDemoRole } from './src/demoRoleRegistry';
 import { ServiceRequests } from './src/ServiceRequests';
 import { ManagerRequests } from './src/ManagerRequests';
+import { ResidenceInbox } from './src/ResidenceInbox';
+import { ManagerTeam } from './src/ManagerTeam';
+import { ManagerAnnouncements } from './src/ManagerAnnouncements';
 import type { ResidenceRequest } from './src/requests';
 import { usePageNavigation, type Page } from './src/usePageNavigation';
 import { ScreenTransition } from './src/motion';
 import { BottomNavigation } from './src/BottomNavigation';
 import { supabase, supabaseConfigured } from './src/supabase';
+import type * as ExpoUpdates from 'expo-updates';
+import type * as ExpoNotifications from 'expo-notifications';
+import { addNotificationResponseListener, getLastNotificationResponse, registerPushNotifications } from './src/pushNotifications';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useRef, useState } from 'react';
@@ -33,11 +38,20 @@ import UserIcon from './assets/stc-icons/user-svgrepo-com.svg';
 import WatchIcon from './assets/stc-icons/watch-round-svgrepo-com.svg';
 
 const appLogo = require('./assets/stc-logo.png');
+const Updates: typeof ExpoUpdates | null = (() => {
+  try {
+    return require('expo-updates') as typeof ExpoUpdates;
+  } catch {
+    // Expo Go or an older installed client may not include the native Updates module.
+    return null;
+  }
+})();
 function AppLogo({ size = 32 }: { size?: number }) {
   return <Image source={appLogo} accessibilityLabel="STC Résidence" resizeMode="contain" style={{ width: size, height: size }} />;
 }
 
 type Role = 'student' | 'staff' | 'manager';
+type BackendProfile = { id: string; full_name: string; name_last_changed_at: string; residence_id: string; role: Role; service: string | null; role_status: 'active' | 'pending' | 'rejected' };
 type ServiceIcon = React.ComponentType<SvgProps>;
 const C = { green: '#16845A', dark: '#103D2E', mint: '#EAF7F0', lime: '#B9ED77', ink: '#18241F', muted: '#78877F', line: '#E6EDE8', white: '#FFFFFF', canvas: '#F6F9F6', orange: '#EF9C54' };
 const residences = [
@@ -77,6 +91,21 @@ function ResidenceApp() {
   const { rtl, language } = useLanguage();
   const Alert = useLocalizedAlert();
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [oauthName, setOauthName] = useState('');
+  const [backendProfile, setBackendProfile] = useState<BackendProfile | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'ready'>('idle');
+  const checkForAppUpdate = async () => {
+    const updates = Updates;
+    if (__DEV__ || !updates?.isEnabled) { Alert.alert('Mise à jour indisponible', 'Les mises à jour sont disponibles dans la version installée depuis EAS.'); return; }
+    try {
+      setUpdateStatus('checking');
+      const result = await updates.checkForUpdateAsync();
+      if (!result.isAvailable) { setUpdateStatus('idle'); Alert.alert('Application à jour', 'Vous utilisez la dernière version disponible.'); return; }
+      await updates.fetchUpdateAsync();
+      setUpdateStatus('ready');
+      Alert.alert('Mise à jour prête', 'La mise à jour est téléchargée. Redémarrez l’application pour l’installer.');
+    } catch (error) { setUpdateStatus('idle'); Alert.alert('Vérification impossible', error instanceof Error ? error.message : 'Réessayez plus tard.'); }
+  };
   React.useEffect(() => { GoogleSignin.configure({ webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, offlineAccess: false }); }, []);
   const signInWithGoogle = async () => {
     if (!supabaseConfigured) { Alert.alert('Supabase non configuré', 'Ajoutez l’URL et la clé publique de votre projet Supabase dans le fichier .env, puis redémarrez Expo.'); return; }
@@ -89,9 +118,33 @@ function ResidenceApp() {
       if (response.type !== 'success') return;
       const idToken = response.data.idToken;
       if (!idToken) throw new Error('Google did not return an ID token. Check the Android and Web OAuth client configuration.');
-      const { error: sessionError } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken });
+      const { data: authData, error: sessionError } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken });
       if (sessionError) throw sessionError;
-      setPage('residence');
+      const signedInUser = authData.user;
+      const googleName = typeof signedInUser.user_metadata?.full_name === 'string'
+        ? signedInUser.user_metadata.full_name
+        : signedInUser.email?.split('@')[0] ?? '';
+      setOauthName(googleName);
+      const { data: profileData, error: profileError } = await supabase.from('profiles')
+        .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status').eq('id', signedInUser.id).maybeSingle();
+      if (profileError) throw profileError;
+      if (profileData) {
+        const profile = profileData as BackendProfile;
+        setBackendProfile(profile);
+        setOauthName(profile.full_name);
+        setRole(profile.role);
+        setService(profile.service ?? 'Restauration');
+        const { data: residenceData, error: residenceError } = await supabase.from('residences')
+          .select('name').eq('id', profile.residence_id).maybeSingle();
+        if (residenceError) throw residenceError;
+        if (residenceData?.name) setResidence(residenceData.name);
+        setPage(profile.role === 'staff' && profile.role_status !== 'active' ? 'team' : 'home');
+      } else if (role === 'manager') {
+        Alert.alert('Accès gestionnaire requis', 'Le gestionnaire doit être activé sur votre compte avant de continuer.');
+        await supabase.auth.signOut();
+      } else {
+        setPage('residence');
+      }
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === statusCodes.SIGN_IN_CANCELLED) return;
       Alert.alert('Connexion Google', error instanceof Error ? error.message : 'Impossible de se connecter avec Google.');
@@ -115,7 +168,7 @@ function ResidenceApp() {
     void retryConnection();
     return unsubscribe;
   }, []);
-  const account = useProfileName();
+  const account = useProfileName(backendProfile);
   const [editingName, setEditingName] = useState(false);
   const { page, setPage, goBack } = usePageNavigation();
   const [role, setRole] = useState<Role>('student');
@@ -126,42 +179,276 @@ function ResidenceApp() {
   const [rating, setRating] = useState(0);
   const [report, setReport] = useState('');
   const [reportSubject, setReportSubject] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
   const [requests, setRequests] = useState<ResidenceRequest[]>([]);
-  const [selected, setSelected] = useState<number[]>([]);
-  const [announcement, setAnnouncement] = useState('');
-  const [blocked, setBlocked] = useState(false);
-  const [approved, setApproved] = useState(false);
+  const [reportSending, setReportSending] = useState(false);
+  React.useEffect(() => {
+    if (!backendProfile || !['manager', 'staff'].includes(backendProfile.role) || !backendProfile.residence_id) { setRequests([]); return; }
+    let alive = true;
+    const loadManagerRequests = async () => {
+      let query = supabase.from('reports')
+        .select('id,subject,service,residence_id,created_at,status,admin_replied_at')
+        .eq('residence_id', backendProfile.residence_id);
+      if (backendProfile.role === 'staff' && backendProfile.service) {
+        query = query.eq('service', backendProfile.service);
+      }
+      const { data, error } = await query.order('created_at', { ascending: false });
+      if (!alive) return;
+      if (error) { Alert.alert('Impossible de charger les demandes', error.message, true); return; }
+      setRequests((data ?? []).map(row => ({
+        id: row.id, title: row.subject, service: row.service, residence,
+        createdAt: Date.parse(row.created_at), status: row.status === 'done' ? 'done' : 'queued',
+        adminRepliedAt: row.admin_replied_at ? Date.parse(row.admin_replied_at) : null,
+      })));
+    };
+    void loadManagerRequests();
+    const channel = supabase.channel(`manager-dashboard-${backendProfile.residence_id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reports', filter: `residence_id=eq.${backendProfile.residence_id}` }, () => { void loadManagerRequests(); })
+      .subscribe();
+    return () => { alive = false; void supabase.removeChannel(channel); };
+  }, [backendProfile?.id, backendProfile?.residence_id, backendProfile?.role, backendProfile?.service, residence]);
+  React.useEffect(() => {
+    let alive = true;
+    const restoreAccount = async (userId: string) => {
+      const { data, error } = await supabase.from('profiles')
+        .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status')
+        .eq('id', userId).maybeSingle();
+      if (!alive) return;
+      if (error) {
+        console.warn('Could not restore Supabase profile:', error.message);
+        return;
+      }
+      if (!data) {
+        setBackendProfile(null);
+        setPage('residence');
+        return;
+      }
+      const profile = data as BackendProfile;
+      setBackendProfile(profile);
+      setRole(profile.role);
+      setOauthName(profile.full_name);
+      setService(profile.service ?? 'Restauration');
+      setStaffAssignment(profile.role === 'staff' ? { service: profile.service ?? '', residence: '' } : null);
+      const { data: residenceData, error: residenceError } = await supabase.from('residences')
+        .select('name').eq('id', profile.residence_id).maybeSingle();
+      if (!alive) return;
+      if (residenceError) console.warn('Could not restore residence:', residenceError.message);
+      else if (residenceData?.name) setResidence(residenceData.name);
+      setPage(profile.role === 'staff' && profile.role_status !== 'active' ? 'team' : 'home');
+    };
+    const register = (userId: string) => {
+      void registerPushNotifications(userId).catch(error => {
+        console.warn('Push notification registration failed:', error);
+      });
+    };
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
+      if (data.session) {
+        register(data.session.user.id);
+        void restoreAccount(data.session.user.id);
+      } else setPage('welcome');
+    });
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION')) {
+        const userId = session.user.id;
+        // Defer Supabase calls out of the auth callback to avoid re-entering its session lock.
+        setTimeout(() => {
+          if (!alive) return;
+          register(userId);
+          void restoreAccount(userId);
+        }, 0);
+      } else if (event === 'SIGNED_OUT') {
+        setBackendProfile(null);
+        setOauthName('');
+        setRole('student');
+        setStaffAssignment(null);
+        setPage('welcome');
+      }
+    });
+    const openDestination = (response: ExpoNotifications.NotificationResponse | null) => {
+      const kind = response?.notification.request.content.data?.type;
+      if (kind === 'major_update') setPage('profile');
+      else if (kind === 'report_received' || kind === 'report_response') setPage('inbox');
+    };
+    openDestination(getLastNotificationResponse());
+    const responseListener = addNotificationResponseListener(openDestination);
+    return () => {
+      alive = false;
+      authListener.subscription.unsubscribe();
+      responseListener?.remove();
+    };
+  }, [setPage]);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const isStaff = role !== 'student';
   const requestAccess = { role, residence: role === 'staff' ? (staffAssignment?.residence ?? '') : residence, assignedService: staffAssignment?.service ?? null };
-  const checkRole = async (target: 'staff' | 'manager', name: string | null, claim = false) => {
-    try {
-      const available = await checkDemoRole({ role: target, residence, service: name }, claim);
-      if (!available) Alert.alert('Poste déjà occupé', target === 'manager' ? 'Cette résidence possède déjà un gestionnaire. Un seul gestionnaire est autorisé par résidence.' : 'Ce service possède déjà un responsable dans cette résidence. Un seul responsable est autorisé par service.');
-      return available;
-    } catch {
-      Alert.alert('Vérification indisponible', 'Impossible de vérifier les postes. Réessayez avant de continuer.');
-      return false;
-    }
-  };
   const continueResidence = async () => {
-    if (role === 'manager' && !(await checkRole('manager', null, true))) return;
-    setPage(role === 'manager' ? 'home' : 'services');
-  };
-  const approveStaff = async () => {
-    if (!staffAssignment) { setPage('residence'); return; }
-    if (!(await checkRole('staff', staffAssignment.service, true))) return;
-    setApproved(true); setRole('staff'); setPage('home');
+    if (role === 'manager') {
+      if (backendProfile?.role !== 'manager' || backendProfile.role_status !== 'active') {
+        Alert.alert('Accès gestionnaire requis', 'Le gestionnaire doit être activé sur votre compte avant de continuer.');
+        return;
+      }
+      setPage('home');
+      return;
+    }
+    if (role === 'student') {
+      const profile = await registerResidenceProfile('student');
+      if (!profile) return;
+    }
+    setPage('services');
   };
   const selectService = async (name: string) => {
     if (role === 'staff') {
-      if (!(await checkRole('staff', name))) return;
       if (staffAssignment && (staffAssignment.service !== name || staffAssignment.residence !== residence)) return;
-      if (!staffAssignment) setStaffAssignment({ service: name, residence });
+      const profile = await registerResidenceProfile('staff', name);
+      if (!profile) return;
+      if (profile.role_status === 'pending') { setStaffAssignment({ service: name, residence }); setService(name); setPage('team'); return; }
+      if (profile.role !== 'staff' || profile.service !== name) {
+        Alert.alert('Rôle déjà associé', 'Votre compte possède déjà un rôle ou un service différent. Contactez le gestionnaire pour le modifier.');
+        return;
+      }
+      setBackendProfile(profile);
+      setStaffAssignment({ service: name, residence });
     }
-    setService(name); setPage(role === 'staff' && !approved ? 'team' : 'home');
+    setService(name); setPage('home');
+  };
+
+  const registerResidenceProfile = async (requestedRole: 'student' | 'staff', requestedService: string | null = null): Promise<BackendProfile | null> => {
+    if (backendProfile) {
+      if (backendProfile.role !== requestedRole || (requestedRole === 'staff' && backendProfile.service !== requestedService)) {
+        Alert.alert('Rôle déjà associé', 'Votre compte possède déjà un rôle ou un service différent. Contactez le gestionnaire pour le modifier.');
+        return null;
+      }
+      if (backendProfile.residence_id) return backendProfile;
+    }
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      Alert.alert('Connexion requise', 'Reconnectez-vous pour continuer.');
+      return null;
+    }
+    const fullName = oauthName.trim() || account.profile?.name?.trim() || authData.user.email?.split('@')[0] || '';
+    const { data, error } = await supabase.rpc('register_residence_profile', {
+      p_full_name: fullName,
+      p_residence_name: residence,
+      p_requested_role: requestedRole,
+      p_service: requestedService,
+    });
+    if (error) {
+      Alert.alert('Inscription impossible', error.message);
+      return null;
+    }
+    const profile = data as BackendProfile;
+    if (!profile?.id) {
+      Alert.alert('Inscription impossible', 'Le serveur n’a pas renvoyé votre profil.');
+      return null;
+    }
+    setBackendProfile(profile);
+    return profile;
+  };
+
+  const submitReport = async () => {
+    if (!reportSubject) { Alert.alert('Choisissez un sujet', 'Sélectionnez un sujet pour votre signalement.'); return; }
+    const details = report.trim();
+    if (!details) { Alert.alert('Un détail est nécessaire', 'Décrivez brièvement le problème avant l’envoi.'); return; }
+    if (reportSending) return;
+    setReportSending(true);
+    try {
+      const profile = backendProfile ?? await registerResidenceProfile('student');
+      if (!profile) return;
+      if (profile.role !== 'student' || profile.role_status !== 'active') {
+        Alert.alert('Compte étudiant requis', 'Seuls les comptes étudiants peuvent envoyer un signalement.');
+        return;
+      }
+      const { error } = await supabase.from('reports').insert({
+        student_id: profile.id,
+        residence_id: profile.residence_id,
+        service,
+        subject: reportSubject,
+        details,
+      });
+      if (error) throw error;
+      Alert.alert('Signalement envoyé', 'Votre demande a été transmise au service concerné.');
+      setReportSubject(null);
+      setReport('');
+      goBack();
+    } catch (error) {
+      Alert.alert('Signalement non envoyé', error instanceof Error ? error.message : 'Vérifiez votre connexion puis réessayez.');
+    } finally { setReportSending(false); }
+  };
+
+  const checkStaffApproval = async () => {
+    if (!backendProfile?.id) return;
+    const { data, error } = await supabase.from('profiles')
+      .select('id,full_name,name_last_changed_at,residence_id,role,service,role_status').eq('id', backendProfile.id).maybeSingle();
+    if (error) { Alert.alert('Vérification impossible', error.message); return; }
+    if (!data) { Alert.alert('Compte introuvable', 'Reconnectez-vous puis réessayez.'); return; }
+    const profile = data as BackendProfile;
+    setBackendProfile(profile);
+    if (profile.role_status === 'active') { setPage('home'); return; }
+    Alert.alert('Toujours en attente', 'Le gestionnaire n’a pas encore validé votre demande.');
+  };
+
+  const submitResidenceRating = async (value: number) => {
+    const profile = backendProfile;
+    if (!profile || profile.role !== 'student') {
+      Alert.alert('Connexion requise', 'Connectez-vous avec votre compte étudiant pour enregistrer une note.');
+      return;
+    }
+    setRating(value);
+    const { error } = await supabase.from('residence_ratings').upsert({
+      user_id: profile.id,
+      residence_id: profile.residence_id,
+      rating: value,
+    }, { onConflict: 'user_id,residence_id' });
+    if (error) Alert.alert('Note non enregistrée', error.message, true);
+  };
+
+  React.useEffect(() => {
+    if (!backendProfile || backendProfile.role !== 'student') { if (!backendProfile || backendProfile.role === 'student') setRequests([]); return; }
+    let alive = true;
+    const loadStudentRequests = async () => {
+      const { data, error } = await supabase.from('reports')
+        .select('id,subject,service,residence_id,created_at,status,admin_replied_at')
+        .eq('student_id', backendProfile.id).order('created_at', { ascending: false }).limit(10);
+      if (!alive) return;
+      if (error) { Alert.alert('Impossible de charger vos demandes', error.message, true); return; }
+      setRequests((data ?? []).map(row => ({ id: row.id, title: row.subject, service: row.service,
+        residence: backendProfile.residence_id, createdAt: Date.parse(row.created_at),
+        status: row.status === 'done' ? 'done' : 'queued',
+        adminRepliedAt: row.admin_replied_at ? Date.parse(row.admin_replied_at) : null,
+      })));
+    };
+    void loadStudentRequests();
+    const channel = supabase.channel(`student-dashboard-${backendProfile.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reports', filter: `student_id=eq.${backendProfile.id}` }, () => { void loadStudentRequests(); })
+      .subscribe();
+    return () => { alive = false; void supabase.removeChannel(channel); };
+  }, [backendProfile?.id, backendProfile?.role, backendProfile?.residence_id]);
+
+  React.useEffect(() => {
+    if (!backendProfile || backendProfile.role !== 'student') { setRating(0); return; }
+    let alive = true;
+    void supabase.from('residence_ratings').select('rating')
+      .eq('user_id', backendProfile.id).eq('residence_id', backendProfile.residence_id).maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) console.warn('Could not load residence rating:', error.message);
+        else setRating(data?.rating ?? 0);
+      });
+    return () => { alive = false; };
+  }, [backendProfile?.id, backendProfile?.residence_id, backendProfile?.role]);
+
+  const signOut = async () => {
+    const { data } = await supabase.auth.getUser();
+    if (data.user) {
+      await supabase.from('push_tokens').delete().eq('user_id', data.user.id);
+    }
+    const { error } = await supabase.auth.signOut();
+    if (error) { Alert.alert('Déconnexion impossible', error.message); return; }
+    setBackendProfile(null);
+    setOauthName('');
+    setRole('student');
+    setStaffAssignment(null);
+    setPage('welcome');
   };
 
   const roleLabel = useMemo(() => role === 'student' ? 'Étudiant·e' : role === 'manager' ? 'Gestionnaire' : 'Responsable de service', [role]);
@@ -196,29 +483,27 @@ function ResidenceApp() {
 
     {page === 'signin' && <><Header title="Connexion" onBack={goBack} /><View style={styles.centerPage}><View style={styles.bigIcon}><AppLogo size={70} /></View><Text style={styles.pageTitle}>Bienvenue dans votre espace</Text><Text style={styles.bodyMuted}>Connectez-vous pour continuer comme {roleLabel.toLowerCase()}.</Text><Pressable disabled={googleLoading} onPress={signInWithGoogle} style={[styles.googleButton, googleLoading && { opacity: .6 }]}><GoogleIcon width={21} height={21} /><Text style={styles.googleText}>{googleLoading ? 'Connexion…' : 'Continuer avec Google'}</Text></Pressable><Text style={styles.legal}>En continuant, vous acceptez les conditions d’utilisation et la politique de confidentialité de STC Résidence.</Text></View></>}
 
-    {page === 'team' && <><Header title="Accès équipe" onBack={goBack} /><View style={styles.centerPage}><View style={[styles.bigIcon, { backgroundColor: '#FFF4E5' }]}><WatchIcon width={27} height={27} /></View><Tag color="#A96718" bg="#FFF1DB">EN ATTENTE DE VALIDATION</Tag><Text style={[styles.pageTitle, { marginTop: 16 }]}>Votre demande est envoyée</Text><Text style={styles.bodyMuted}>Le gestionnaire de la résidence vérifiera votre rôle avant d’ouvrir l’espace équipe.</Text><View style={styles.infoBox}><Text style={styles.infoTitle}>Responsable de service</Text><Text style={styles.infoBody}>Votre résidence et votre service seront associés à votre compte après validation.</Text></View></View></>}
+    {page === 'team' && role === 'manager' && <><Header title="Équipe de résidence" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><ManagerTeam residenceId={backendProfile?.residence_id ?? ''} /></ScrollView></>}
+    {page === 'team' && role === 'staff' && <><Header title="Accès équipe" onBack={goBack} /><View style={styles.centerPage}><View style={[styles.bigIcon, { backgroundColor: '#FFF4E5' }]}><WatchIcon width={27} height={27} /></View><Tag color="#A96718" bg="#FFF1DB">EN ATTENTE DE VALIDATION</Tag><Text style={[styles.pageTitle, { marginTop: 16 }]}>Votre demande est envoyée</Text><Text style={styles.bodyMuted}>Le gestionnaire de la résidence vérifiera votre rôle avant d’ouvrir l’espace équipe.</Text><View style={styles.infoBox}><Text style={styles.infoTitle}>Responsable de service</Text><Text style={styles.infoBody}>{backendProfile?.service ?? 'Votre service'} · {residence}</Text></View><Button title="Vérifier mon accès" onPress={() => { void checkStaffApproval(); }} secondary /><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></View></>}
 
     {page === 'residence' && <><Header title="Votre résidence" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><Text style={styles.eyebrow}>{roleLabel.toUpperCase()}</Text><Text style={styles.pageTitle}>Choisissez votre résidence</Text><Text style={styles.bodyMuted}>Les résidences sont affichées par DOU. La première est ouverte pour le lancement.</Text><Text style={styles.sectionLabel}>DOU OUARGLA</Text>{residences.slice(0, 4).map((name, i) => <Pressable key={name} onPress={() => i === 0 ? setResidence(name) : Alert.alert('Bientôt disponible', `${name} sera ajoutée prochainement.`)} style={[styles.listRow, residence === name && styles.listRowActive]}><View style={[styles.resIcon, residence === name && { backgroundColor: C.green }]}><Text style={{ color: residence === name ? 'white' : C.green, fontWeight: '800' }}>{i === 0 ? '01' : `0${i + 1}`}</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>{name}</Text><Text style={styles.listSub}>{i === 0 ? 'Résidence garçons · Ouargla' : 'Ouverture prochaine'}</Text></View>{i === 0 ? <Text style={styles.check}>{residence === name ? '✓' : '○'}</Text> : <Tag color="#87918B" bg="#F0F3F1">Bientôt</Tag>}</Pressable>)}<Text style={styles.sectionLabel}>DOU OUARGLA-PÔLE</Text>{residences.slice(4).map((name, i) => <Pressable key={name} onPress={() => Alert.alert('Bientôt disponible', `${name} sera ajoutée prochainement.`)} style={styles.listRow}><View style={styles.resIcon}><Text style={{ color: C.green, fontWeight: '800' }}>{`0${i + 5}`}</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>{name}</Text><Text style={styles.listSub}>Ouverture prochaine</Text></View><Tag color="#87918B" bg="#F0F3F1">Bientôt</Tag></Pressable>)}<Button title="Continuer" onPress={continueResidence} /></ScrollView></>}
 
     {page === 'services' && <><Header title="Choisir un service" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.residenceSummary}><HouseIcon width={23} height={23} /><View><Text style={styles.listTitle}>{residence}</Text><Text style={styles.listSub}>Ouargla · {roleLabel}</Text></View></View><Text style={styles.pageTitle}>Quel service souhaitez-vous joindre ?</Text><Text style={styles.bodyMuted}>Chaque signalement sera transmis à l’équipe concernée.</Text>{services.filter(item => role !== 'staff' || !staffAssignment || item.name === staffAssignment.service).map((item) => <Pressable key={item.name} onPress={() => selectService(item.name)} style={({ pressed }) => [styles.serviceRow, pressed && styles.pressed]}><View style={[styles.serviceIcon, { backgroundColor: item.tint }]}><item.icon width={24} height={24} /></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>{item.name}</Text><Text style={styles.listSub}>{item.caption}{language === 'fr' ? ` · ${item.ar}` : ''}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}</ScrollView></>}
 
-    {page === 'report' && !isStaff && <><Header title="Nouveau signalement" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><Tag>{service.toUpperCase()}</Tag><Text style={[styles.pageTitle, { marginTop: 14 }]}>Dites-nous ce qui se passe.</Text><Text style={styles.bodyMuted}>Votre signalement sera transmis au service {service.toLowerCase()} de {residence}.</Text><Text style={styles.sectionLabel}>SUJET</Text><View style={styles.chipWrap}>{['Propreté', 'Équipement', 'Qualité', 'Autre'].map(x => { const active = reportSubject === x; return <Pressable key={x} accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={() => setReportSubject(x)} style={[styles.choiceChip, active && styles.chipSelected]}><Text style={[styles.choiceText, active && { color: C.green, fontWeight: '800' }]}>{active ? '✓  ' : ''}{x}</Text></Pressable>; })}</View><Text style={styles.sectionLabel}>DÉTAILS</Text><TextInput value={report} onChangeText={setReport} multiline placeholder="Décrivez le problème et indiquez où il se trouve…" placeholderTextColor="#A1ADA6" style={styles.textArea} /><Text style={styles.sectionLabel}>PHOTO (FACULTATIF)</Text><Pressable onPress={() => Alert.alert('Photo', 'L’ajout de photo sera activé dans la version connectée.')} style={styles.upload}><Text style={{ fontSize: 22, color: C.green }}>＋</Text><Text style={styles.uploadText}>Ajouter une photo</Text></Pressable><Button title="Envoyer le signalement  →" onPress={() => { if (!reportSubject) { Alert.alert('Choisissez un sujet', 'Sélectionnez un sujet pour votre signalement.'); return; } if (!report.trim()) { Alert.alert('Un détail est nécessaire', 'Décrivez brièvement le problème avant l’envoi.'); return; } setSent(true); setRequests(previous => [...previous, { id: `SR-${Date.now()}`, title: `${reportSubject} — ${report.trim()}`, service, residence, createdAt: Date.now(), status: 'queued', adminRepliedAt: null }]); Alert.alert('Signalement enregistré', 'Votre demande apparaît dans votre suivi.'); setReportSubject(null); setReport(''); goBack(); }} /></ScrollView></>}
+    {page === 'report' && !isStaff && <><Header title="Nouveau signalement" onBack={goBack} /><ScrollView contentContainerStyle={styles.formScroll}><Tag>{service.toUpperCase()}</Tag><Text style={[styles.pageTitle, { marginTop: 14 }]}>Dites-nous ce qui se passe.</Text><Text style={styles.bodyMuted}>Votre signalement sera transmis au service {service.toLowerCase()} de {residence}.</Text><Text style={styles.sectionLabel}>SUJET</Text><View style={styles.chipWrap}>{['Propreté', 'Équipement', 'Qualité', 'Autre'].map(x => { const active = reportSubject === x; return <Pressable key={x} accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={() => setReportSubject(x)} style={[styles.choiceChip, active && styles.chipSelected]}><Text style={[styles.choiceText, active && { color: C.green, fontWeight: '800' }]}>{active ? '✓  ' : ''}{x}</Text></Pressable>; })}</View><Text style={styles.sectionLabel}>DÉTAILS</Text><TextInput value={report} onChangeText={setReport} multiline placeholder="Décrivez le problème et indiquez où il se trouve…" placeholderTextColor="#A1ADA6" style={styles.textArea} /><Text style={styles.sectionLabel}>PHOTO (FACULTATIF)</Text><Pressable onPress={() => Alert.alert('Photo', 'L’ajout de photo sera activé dans la version connectée.')} style={styles.upload}><Text style={{ fontSize: 22, color: C.green }}>＋</Text><Text style={styles.uploadText}>Ajouter une photo</Text></Pressable><Button title={reportSending ? 'Envoi…' : 'Envoyer le signalement  →'} onPress={() => { void submitReport(); }} /></ScrollView></>}
 
-    {page === 'inbox' && isStaff && <><Header title="Boîte de réception" /><ScrollView contentContainerStyle={styles.formScroll}><ServiceRequests access={requestAccess} requests={requests} /></ScrollView></>}
-    {page === 'inbox' && !isStaff && <><Header title={isStaff ? 'Boîte de réception' : 'Mes messages'} right={<View style={styles.headerBubble}><Text style={{ color: C.green, fontWeight: '800' }}>2</Text></View>} /><ScrollView contentContainerStyle={styles.formScroll}><Text style={styles.bodyMuted}>{isStaff ? `Signalements pour ${service}` : 'Suivez les réponses des équipes de votre résidence.'}</Text>{[{ title: 'Éclairage du couloir', label: 'Hébergement', status: 'En cours', time: 'Aujourd’hui · 09:42', text: 'Bonjour, la lumière du couloir du 2e étage ne fonctionne plus depuis hier soir.' }, { title: 'Repas du soir', label: 'Restauration', status: 'Réponse reçue', time: 'Hier · 18:20', text: 'Merci pour votre retour. Le menu de cette semaine sera transmis à l’équipe.' }].map((x, i) => <Pressable key={x.title} style={styles.reportCard} onPress={() => Alert.alert(x.title, isStaff ? 'Ouvrir la conversation et répondre (serveur requis pour les messages réels).' : x.text)}><View style={styles.cardTop}><Tag color={i === 0 ? '#BA7B2D' : C.green} bg={i === 0 ? '#FFF4E5' : C.mint}>{x.status.toUpperCase()}</Tag><Text style={styles.time}>{x.time}</Text></View><Text style={[styles.listTitle, { marginTop: 12 }]}>{x.title}</Text><Text style={styles.listSub}>{x.label} · {residence}</Text><Text numberOfLines={2} style={styles.reportExcerpt}>{x.text}</Text><Text style={styles.cardLink}>{isStaff ? 'Répondre  →' : 'Voir la conversation  →'}</Text></Pressable>)}{isStaff && <View style={styles.infoBox}><Text style={styles.infoTitle}>Messages équipe ↔ gestionnaire</Text><Text style={styles.infoBody}>Les échanges privés et la messagerie par résidence seront disponibles après connexion au serveur STC.</Text></View>}</ScrollView></>}
+    {page === 'inbox' && <><Header title={role === 'student' ? 'Mes signalements' : 'Boîte de réception'} /><ScrollView contentContainerStyle={styles.formScroll}><ResidenceInbox role={role} residenceId={backendProfile?.residence_id ?? ''} service={role === 'staff' ? backendProfile?.service ?? service : null} userId={backendProfile?.id ?? ''} /></ScrollView></>}
 
-    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><View style={styles.avatar}><UserIcon width={28} height={28} /></View><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name ?? 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<Pressable style={styles.settingsRow} onPress={() => Alert.alert('Photo de profil', 'La photo de profil pourra être ajoutée ou modifiée à tout moment.')}><View style={styles.settingsIcon}><UserIcon width={17} height={17} /></View><Text style={styles.settingsText}>Photo de profil</Text><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><Text style={styles.sectionLabel}>DÉCOUVRIR STC</Text><View style={styles.settingsCard}>{['STC Officiel', 'Projets STC', 'À propos de l’application'].map((x, i) => <Pressable key={x} style={styles.settingsRow} onPress={() => Alert.alert(x, i === 0 ? 'stc-official.netlify.app' : 'Découvrez les projets de STC.')}><View style={styles.settingsIcon}>{i === 0 ? <ShareIcon width={17} height={17} /> : i === 1 ? <TeamIcon width={17} height={17} /> : <HouseIcon width={17} height={17} />}</View><Text style={styles.settingsText}>{x}</Text><Text style={styles.arrow}>›</Text></Pressable>)}</View><Button title="Se déconnecter" onPress={() => setPage('welcome')} secondary /></ScrollView></>}
-
-    {page === 'team' && null}
+    {page === 'profile' && <><Header title="Mon espace" /><ScrollView contentContainerStyle={styles.formScroll}><View style={styles.profileHero}><View style={styles.avatar}><UserIcon width={28} height={28} /></View><View style={{ flex: 1 }}><Text raw={Boolean(account.profile)} style={styles.listTitle}>{account.profile?.name || oauthName || 'Mon compte'}</Text><Text style={styles.listSub}>{roleLabel} · {residence}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={rtl ? 'تعديل الاسم' : 'Modifier le nom'} onPress={() => setEditingName(true)} style={{ padding: 10 }}><EditIcon width={19} height={19} /></Pressable></View><Text style={styles.sectionLabel}>MON COMPTE</Text><View style={styles.settingsCard}><Pressable style={styles.settingsRow} onPress={() => setEditingName(value => !value)}><View style={styles.settingsIcon}><EditIcon width={17} height={17} /></View><Text style={styles.settingsText}>Informations personnelles</Text><Text style={styles.arrow}>›</Text></Pressable>{editingName && <ProfileNameEditor account={account} onClose={() => setEditingName(false)} />}<Pressable style={styles.settingsRow} onPress={() => Alert.alert('Photo de profil', 'La photo de profil pourra être ajoutée ou modifiée à tout moment.')}><View style={styles.settingsIcon}><UserIcon width={17} height={17} /></View><Text style={styles.settingsText}>Photo de profil</Text><Text style={styles.arrow}>›</Text></Pressable><Pressable accessibilityRole="button" style={styles.settingsRow} onPress={updateStatus === 'ready' && Updates ? () => { void Updates.reloadAsync(); } : checkForAppUpdate}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>{updateStatus === 'ready' ? 'Installer la mise à jour' : 'Vérifier les mises à jour'}</Text><Text style={styles.listSub}>{updateStatus === 'checking' ? 'Vérification…' : updateStatus === 'ready' ? 'Mise à jour téléchargée · redémarrer' : 'Version de l’application'}</Text></View><Text style={styles.arrow}>›</Text></Pressable><View style={styles.settingsRow}><View style={styles.settingsIcon}><WatchIcon width={17} height={17} /></View><View style={{ flex: 1 }}><Text style={styles.settingsText}>Changement de rôle</Text><Text style={styles.listSub}>Disponible dans 14 jours</Text></View><Tag color="#8A7550" bg="#F8F1E6">14 j</Tag></View></View><Text style={styles.sectionLabel}>DÉCOUVRIR STC</Text><View style={styles.settingsCard}>{['STC Officiel', 'Projets STC', 'À propos de l’application'].map((x, i) => <Pressable key={x} style={styles.settingsRow} onPress={() => Alert.alert(x, i === 0 ? 'stc-official.netlify.app' : 'Découvrez les projets de STC.')}><View style={styles.settingsIcon}>{i === 0 ? <ShareIcon width={17} height={17} /> : i === 1 ? <TeamIcon width={17} height={17} /> : <HouseIcon width={17} height={17} />}</View><Text style={styles.settingsText}>{x}</Text><Text style={styles.arrow}>›</Text></Pressable>)}</View><Button title="Se déconnecter" onPress={() => { void signOut(); }} secondary /></ScrollView></>}
 
     {page === 'home' && <><Header title={isStaff ? 'Espace service' : 'Accueil'} right={<Pressable style={styles.headerBubble} onPress={() => setPage('inbox')}><MessagesIcon width={19} height={19} /></Pressable>} /><ScrollView contentContainerStyle={styles.homeScroll}>
       {isStaff && role === 'staff' && <View style={styles.pendingStrip}></View>}
-      <View style={styles.greeting}><View><Text style={styles.greetingSmall}>{isStaff ? `TABLEAU DE BORD · ${service.toUpperCase()}` : new Date().toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</Text><Text raw style={styles.greetingTitle}>{isStaff ? (rtl ? 'مرحبًا بالفريق' : 'Bonjour, l’équipe') : `${rtl ? 'مرحبًا' : 'Bonjour'}${account.profile ? `, ${account.profile.name}` : ''}`}</Text></View><View style={styles.avatarSmall}><UserIcon width={23} height={23} /></View></View>
+      <View style={styles.greeting}><View><Text style={styles.greetingSmall}>{isStaff ? `TABLEAU DE BORD · ${service.toUpperCase()}` : new Date().toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</Text><Text raw style={styles.greetingTitle}>{isStaff ? (rtl ? 'مرحبًا بالفريق' : 'Bonjour, l’équipe') : `${rtl ? 'مرحبًا' : 'Bonjour'}${oauthName ? `, ${oauthName}` : account.profile ? `, ${account.profile.name}` : ''}`}</Text></View><View style={styles.avatarSmall}><UserIcon width={23} height={23} /></View></View>
       <GreenCard style={styles.homeHero}><View style={{ flex: 1 }}><Tag color={C.lime} bg="rgba(255,255,255,.12)">{residence.toUpperCase()}</Tag><Text style={styles.homeHeroTitle}>{isStaff ? 'Les demandes, à portée de main.' : 'Un petit geste peut améliorer la vie de tous.'}</Text><Text style={styles.homeHeroSub}>{isStaff ? 'Consultez les demandes de votre service.' : 'Votre voix compte dans votre résidence.'}</Text></View></GreenCard>
       {role === 'manager' && <ManagerRequests role={role} residence={residence} requests={requests} />}
-      {isStaff ? <ServiceRequests access={requestAccess} requests={requests} /> : <><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Signaler un problème</Text><Text style={styles.stepHint}>1 / 3</Text></View><View style={styles.serviceGrid}>{services.map(item => <Pressable key={item.name} onPress={() => { setService(item.name); setPage('report'); }} style={({ pressed }) => [styles.serviceTile, pressed && { transform: [{ scale: .975 }], backgroundColor: C.mint }]}><View style={[styles.tileIcon, { backgroundColor: item.tint }]}><item.icon width={22} height={22} /></View><Text style={styles.tileTitle}>{item.name}</Text><Text style={styles.tileSub}>{item.caption}</Text></Pressable>)}</View><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Mes demandes</Text><Pressable onPress={() => setPage('inbox')}><Text style={styles.seeAll}>Tout voir →</Text></Pressable></View>{sent ? <View style={styles.reportCard}><View style={styles.cardTop}><Tag>NOUVEAU</Tag><Text style={styles.time}>À l’instant</Text></View><Text style={[styles.listTitle, { marginTop: 12 }]}>Votre signalement a été envoyé</Text><Text raw style={styles.reportExcerpt}>{report}</Text></View> : <View style={styles.emptyCard}><View style={styles.emptyIcon}><Text style={{ color: C.green, fontSize: 22 }}>✓</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>Tout est à jour</Text><Text style={styles.listSub}>Vos nouvelles demandes apparaîtront ici.</Text></View></View>}<View style={styles.rateCard}><View style={{ flex: 1 }}><View style={styles.rateHeading}><MedalIcon width={20} height={20} /><Text style={styles.rateTitle}>Comment se passe la vie ici ?</Text></View><Text style={styles.rateSub}>Évaluez votre résidence</Text></View><View style={styles.stars}>{[1,2,3,4,5].map(n => <Pressable onPress={() => setRating(n)} key={n}><Text style={{ fontSize: 22, color: n <= rating ? '#EAA84A' : '#D5DDD7' }}>★</Text></Pressable>)}</View></View></>}
+      {isStaff ? <ServiceRequests access={requestAccess} requests={requests} onOpenInbox={() => setPage('inbox')} /> : <><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Signaler un problème</Text><Text style={styles.stepHint}>1 / 3</Text></View><View style={styles.serviceGrid}>{services.map(item => <Pressable key={item.name} onPress={() => { setService(item.name); setPage('report'); }} style={({ pressed }) => [styles.serviceTile, pressed && { transform: [{ scale: .975 }], backgroundColor: C.mint }]}><View style={[styles.tileIcon, { backgroundColor: item.tint }]}><item.icon width={22} height={22} /></View><Text style={styles.tileTitle}>{item.name}</Text><Text style={styles.tileSub}>{item.caption}</Text></Pressable>)}</View><View style={styles.sectionHead}><Text style={styles.sectionTitle}>Mes demandes</Text><Pressable onPress={() => setPage('inbox')}><Text style={styles.seeAll}>Tout voir →</Text></Pressable></View>{requests[0] ? <Pressable onPress={() => setPage('inbox')} style={styles.reportCard}><View style={styles.cardTop}><Tag color={requests[0].status === 'done' ? C.green : '#A96718'} bg={requests[0].status === 'done' ? C.mint : '#FFF1DB'}>{requests[0].status === 'done' ? 'TERMINÉ' : requests[0].adminRepliedAt ? 'EN COURS' : 'EN ATTENTE'}</Tag><Text raw style={styles.time}>{new Date(requests[0].createdAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text></View><Text raw style={[styles.listTitle, { marginTop: 12 }]}>{requests[0].title}</Text><Text style={styles.reportExcerpt}>{requests[0].service}</Text></Pressable> : <View style={styles.emptyCard}><View style={styles.emptyIcon}><Text style={{ color: C.green, fontSize: 22 }}>✓</Text></View><View style={{ flex: 1 }}><Text style={styles.listTitle}>Tout est à jour</Text><Text style={styles.listSub}>Vos nouvelles demandes apparaîtront ici.</Text></View></View>}<View style={styles.rateCard}><View style={{ flex: 1 }}><View style={styles.rateHeading}><MedalIcon width={20} height={20} /><Text style={styles.rateTitle}>Comment se passe la vie ici ?</Text></View><Text style={styles.rateSub}>Évaluez votre résidence</Text></View><View style={styles.stars}>{[1,2,3,4,5].map(n => <Pressable onPress={() => { void submitResidenceRating(n); }} key={n}><Text style={{ fontSize: 22, color: n <= rating ? '#EAA84A' : '#D5DDD7' }}>★</Text></Pressable>)}</View></View></>}
       {role === 'manager' && <View style={styles.quickGrid}><Pressable style={styles.quickCard} onPress={() => setPage('team')}><View style={styles.quickIcon}><TeamIcon width={21} height={21} /></View><Text style={styles.quickTitle}>Équipe</Text><Text style={styles.quickSub}>Demandes de rôles</Text></Pressable><Pressable style={styles.quickCard} onPress={() => setPage('team')}><View style={styles.quickIcon}><UserIcon width={21} height={21} /></View><Text style={styles.quickTitle}>Utilisateurs</Text><Text style={styles.quickSub}>Accès & modération</Text></Pressable></View>}
-      {role === 'manager' && <View style={styles.managerBox}><Text style={styles.sectionTitle}>GESTIONNAIRE · VUE GLOBALE</Text><Text style={styles.bodyMuted}>11 résidences · demandes de rôle · annonces ciblées</Text><TextInput value={announcement} onChangeText={setAnnouncement} placeholder="Écrire une annonce pour les résidents…" style={styles.announceInput} /><View style={styles.chipWrap}>{['Tous', 'Résidence', 'Étudiants', 'Équipe'].map((x, i) => <Pressable key={x} onPress={() => setSelected(i === 0 ? [] : [...selected, i])} style={[styles.choiceChip, (i === 0 ? selected.length === 0 : selected.includes(i)) && styles.chipSelected]}><Text style={styles.choiceText}>{x}</Text></Pressable>)}</View><Button title="Prévisualiser l’annonce" onPress={() => Alert.alert('Annonce', announcement || 'Écrivez une annonce avant de la prévisualiser.', Boolean(announcement))} secondary /></View>}
+      {role === 'manager' && <ManagerAnnouncements residenceId={backendProfile?.residence_id ?? ''} />}
       <Pressable onPress={() => { setPage('profile'); }} style={styles.webLink}><Text style={{ color: C.green, fontWeight: '700' }}>Découvrir STC →</Text><Text style={{ color: C.muted, fontSize: 12 }}> stc-official.netlify.app</Text></Pressable>
     </ScrollView></>}
 

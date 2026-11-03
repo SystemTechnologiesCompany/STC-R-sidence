@@ -81,6 +81,13 @@ const arabic: Record<string, string> = {
   'Comment se passe la vie ici ?': 'كيف تقيّم الحياة هنا؟', 'Évaluez votre résidence': 'قيّم إقامتك', 'GESTIONNAIRE · VUE GLOBALE': 'المدير · نظرة شاملة', '11 résidences · demandes de rôle · annonces ciblées': '11 إقامة · طلبات أدوار · إعلانات موجّهة',
   'Écrire une annonce pour les résidents…': 'اكتب إعلانًا للمقيمين…', 'Tous': 'الجميع', 'Résidence': 'الإقامة', 'Étudiants': 'الطلبة', 'Prévisualiser l’annonce': 'معاينة الإعلان', 'Annonce': 'إعلان', 'Écrivez une annonce avant de la prévisualiser.': 'اكتب إعلانًا قبل معاينته.', 'Découvrir STC →': 'اكتشف STC ←',
   'Ouargla ·': 'ورقلة ·', '‹': '›', '›': '‹', '↗': '↖', '→': '←',
+  'Annonce de résidence': 'إعلان الإقامة', 'Sans destinataire sélectionné, l’annonce sera envoyée à toute la résidence.': 'إذا لم يتم اختيار مستلمين، فسيُرسل الإعلان إلى جميع المقيمين.',
+  'Destinataires facultatifs': 'مستلمون اختياريون', 'Tout le monde': 'الجميع', 'Aucun membre trouvé.': 'لم يتم العثور على أعضاء.',
+  'Envoyer à toute la résidence': 'إرسال إلى جميع المقيمين', 'Annonce envoyée': 'تم إرسال الإعلان',
+  'Envoyée à toute la résidence.': 'تم الإرسال إلى جميع المقيمين.', 'Annonce non envoyée': 'لم يتم إرسال الإعلان',
+  'Impossible de charger les résidents': 'تعذّر تحميل المقيمين', 'Marquer comme terminé': 'تحديد كمكتمل',
+  'Clôture…': 'جارٍ الإغلاق…', 'Impossible de clôturer le signalement': 'تعذّر إغلاق البلاغ',
+  'Envoyer à': 'إرسال إلى', 'personne(s)': 'أشخاص',
 };
 const normalized = new Map(Object.entries(arabic).map(([key, value]) => [key.normalize('NFC').toLowerCase(), value]));
 export function translate(text: string, language: 'fr' | 'ar'): string {

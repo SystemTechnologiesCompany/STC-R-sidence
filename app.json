@@ -4,13 +4,25 @@
     "slug": "stc-residence",
     "scheme": "stc-residence",
     "version": "1.0.0",
+    "runtimeVersion": { "policy": "appVersion" },
+    "updates": {
+      "url": "https://u.expo.dev/117a51a2-7ba5-4c3d-bb65-958358de4b65",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "orientation": "portrait",
     "icon": "./assets/stc-logo.png",
     "userInterfaceStyle": "light",
     "plugins": [
       "expo-router",
       "@react-native-google-signin/google-signin",
-      "@react-native-google-signin/google-signin"
+      [
+        "expo-notifications",
+        {
+          "color": "#16845A",
+          "defaultChannel": "stc-updates"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -22,16 +22,15 @@ export function ManagerRequests({ role, residence, requests }: { role: string; r
     <Text style={styles.subtitle}>Tous les services de votre résidence</Text>
     <View style={styles.legend}>{(Object.keys(statuses) as (keyof typeof statuses)[]).map(key => <View key={key} style={[styles.metric, { backgroundColor: statuses[key].tint }]}><View style={styles.statusLine}><View style={[styles.dot, { backgroundColor: statuses[key].color }]} /><Text raw style={[styles.count, { color: statuses[key].color }]}>{rows.filter(request => requestState(request, now) === key).length}</Text></View><Text style={styles.label}>{statuses[key].label}</Text></View>)}</View>
     {overdue.length > 0 && <Pressable accessibilityRole="button" onPress={explain} style={styles.alert}><Text raw style={styles.alertIcon}>!</Text><View style={{ flex: 1 }}><Text style={styles.alertTitle}>Demandes sans réponse</Text><Text raw style={styles.alertBody}>{rtl ? `${overdue.length} بلاغات تتطلب المتابعة · اضغط للتفاصيل` : `${overdue.length} demande(s) à relancer · Voir le détail`}</Text></View></Pressable>}
-    {rows.some(request => request.demo) && <Text style={styles.demo}>Aperçu · exemples de demandes inclus</Text>}
     <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ minWidth: '100%' }}><View style={{ minWidth: 480, flex: 1, direction: rtl ? 'rtl' : 'ltr' }}>
       <View style={[styles.row, styles.tableHead]}><Text style={[styles.cell, styles.requestCell]}>Demande</Text><Text style={[styles.cell, styles.serviceCell]}>Service</Text><Text style={[styles.cell, styles.statusCell]}>État</Text></View>
       {rows.map(request => {
         const state = requestState(request, now);
         const status = statuses[state];
         return <View key={request.id} style={styles.row}>
-          <View style={styles.requestCell}><Text raw={!request.demo} numberOfLines={2} style={styles.requestTitle}>{request.title}</Text><Text raw style={styles.date}>{request.id} · {new Date(request.createdAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text></View>
+          <View style={styles.requestCell}><Text raw numberOfLines={2} style={styles.requestTitle}>{request.title}</Text><Text raw style={styles.date}>{request.id} · {new Date(request.createdAt).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'fr-FR')}</Text></View>
           <Text style={[styles.cell, styles.serviceCell]}>{request.service}</Text>
-          <Pressable disabled={state !== 'overdue'} accessibilityRole={state === 'overdue' ? 'button' : undefined} accessibilityLabel={t(status.label)} onPress={() => alert.alert(request.demo ? t(request.title) : request.title, 'Ces demandes ne sont pas terminées et n’ont reçu aucune réponse administrative depuis au moins 72 heures.')} style={[styles.statusCell, styles.statusLine]}><View style={[styles.dot, { backgroundColor: status.color }]} /><Text style={[styles.label, { color: status.color }]}>{status.label}</Text>{state === 'overdue' && <Text raw style={styles.warning}>!</Text>}</Pressable>
+          <Pressable disabled={state !== 'overdue'} accessibilityRole={state === 'overdue' ? 'button' : undefined} accessibilityLabel={t(status.label)} onPress={() => alert.alert(request.title, 'Ces demandes ne sont pas terminées et n’ont reçu aucune réponse administrative depuis au moins 72 heures.')} style={[styles.statusCell, styles.statusLine]}><View style={[styles.dot, { backgroundColor: status.color }]} /><Text style={[styles.label, { color: status.color }]}>{status.label}</Text>{state === 'overdue' && <Text raw style={styles.warning}>!</Text>}</Pressable>
         </View>;
       })}
     </View></ScrollView>
